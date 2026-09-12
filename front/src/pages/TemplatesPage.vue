@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Copy, Pencil, Plus, Trash2 } from '@lucide/vue'
+import { Copy, Pencil, Plus, Star, Trash2 } from '@lucide/vue'
 import { onMounted, ref } from 'vue'
 import type { VideoTemplate } from '@/entities/template/model/types'
 import { readData, readError } from '@/shared/api/http'
@@ -32,6 +32,20 @@ async function duplicate(id: string) {
   busy.value = ''
   await load()
 }
+async function setDefault(id: string) {
+  busy.value = id
+  error.value = ''
+  const response = await fetch(`/api/templates/${id}/default`, {
+    method: 'PUT',
+  })
+  if (!response.ok)
+    error.value = await readError(
+      response,
+      'Не удалось назначить шаблон по умолчанию',
+    )
+  busy.value = ''
+  await load()
+}
 async function remove(item: VideoTemplate) {
   if (!window.confirm(`Удалить шаблон «${item.name}»?`)) return
   busy.value = item.id
@@ -54,7 +68,8 @@ onMounted(() => void load())
       <div>
         <h1 class="text-xl font-semibold">Шаблоны видео</h1>
         <p class="mt-1 text-slate-600">
-          Композиции для рендера: слои, субтитры, фоны и ассеты.
+          Здесь хранится базовый вид видео. Перед рендером его можно изменить
+          для конкретного клипа.
         </p>
       </div>
       <RouterLink to="/templates/new"
@@ -88,7 +103,15 @@ onMounted(() => void load())
           9:16 · {{ item.config.layers.length }} слоёв
         </div>
         <div class="p-4">
-          <h2 class="font-semibold">{{ item.name }}</h2>
+          <div class="flex items-center justify-between gap-2">
+            <h2 class="font-semibold">{{ item.name }}</h2>
+            <span
+              v-if="item.isDefault"
+              class="inline-flex items-center gap-1 rounded-full bg-violet-100 px-2 py-1 text-xs font-medium text-violet-800"
+            >
+              <Star class="size-3 fill-current" />По умолчанию
+            </span>
+          </div>
           <p class="mt-1 min-h-10 text-sm text-slate-600">
             {{ item.description || 'Без описания' }}
           </p>
@@ -99,6 +122,13 @@ onMounted(() => void load())
               ></RouterLink
             >
             <AppButton
+              v-if="!item.isDefault"
+              variant="secondary"
+              :disabled="busy === item.id"
+              @click="setDefault(item.id)"
+              ><Star class="mr-1 inline size-4" />По умолчанию</AppButton
+            >
+            <AppButton
               variant="secondary"
               :disabled="busy === item.id"
               @click="duplicate(item.id)"
@@ -106,7 +136,8 @@ onMounted(() => void load())
             >
             <AppButton
               variant="danger"
-              :disabled="busy === item.id"
+              :disabled="busy === item.id || item.isDefault"
+              :title="item.isDefault ? 'Сначала назначьте другой шаблон по умолчанию' : undefined"
               @click="remove(item)"
               ><Trash2 class="mr-1 inline size-4" />Удалить</AppButton
             >

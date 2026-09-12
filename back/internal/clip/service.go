@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/finde-clip/finde-v2/back/infrastructure/twitch"
+	"github.com/finde-clip/finde-v2/back/internal/composition"
 	"github.com/finde-clip/finde-v2/back/internal/videotemplate"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -16,21 +17,24 @@ type Service struct {
 	templates *videotemplate.Service
 }
 type Local struct {
-	ID            string `json:"id"`
-	StreamerID    string `json:"streamerId"`
-	StreamerName  string `json:"streamerName"`
-	Title         string `json:"title"`
-	ThumbnailURL  string `json:"thumbnailUrl"`
-	Status        string `json:"status"`
-	Error         string `json:"error"`
-	CurrentStep   string `json:"currentStep"`
-	Progress      int    `json:"progress"`
-	LastJobType   string `json:"lastJobType"`
-	LastJobStatus string `json:"lastJobStatus"`
+	ID            string  `json:"id"`
+	StreamerID    string  `json:"streamerId"`
+	StreamerName  string  `json:"streamerName"`
+	Title         string  `json:"title"`
+	ThumbnailURL  string  `json:"thumbnailUrl"`
+	Duration      float64 `json:"duration"`
+	HasSource     bool    `json:"hasSource"`
+	Status        string  `json:"status"`
+	Error         string  `json:"error"`
+	CurrentStep   string  `json:"currentStep"`
+	Progress      int     `json:"progress"`
+	LastJobType   string  `json:"lastJobType"`
+	LastJobStatus string  `json:"lastJobStatus"`
 }
 
 func (s *Service) List(ctx context.Context) ([]Local, error) {
-	rows, e := s.db.Query(ctx, `SELECT c.id,c.streamer_id,s.display_name,c.title,COALESCE(c.thumbnail_url,''),c.status,COALESCE(c.error,''),
+	rows, e := s.db.Query(ctx, `SELECT c.id,c.streamer_id,s.display_name,c.title,COALESCE(c.thumbnail_url,''),COALESCE(c.duration,0),
+		EXISTS(SELECT 1 FROM media_files m WHERE m.clip_id=c.id AND m.type='source'),c.status,COALESCE(c.error,''),
 		COALESCE(j.current_step,''),COALESCE(j.progress,0),COALESCE(j.type::text,''),COALESCE(j.status::text,'')
 		FROM clips c JOIN streamers s ON s.id=c.streamer_id
 		LEFT JOIN LATERAL (SELECT current_step,progress,type,status FROM processing_jobs WHERE clip_id=c.id ORDER BY created_at DESC LIMIT 1) j ON true
@@ -42,7 +46,7 @@ func (s *Service) List(ctx context.Context) ([]Local, error) {
 	out := []Local{}
 	for rows.Next() {
 		var x Local
-		if e = rows.Scan(&x.ID, &x.StreamerID, &x.StreamerName, &x.Title, &x.ThumbnailURL, &x.Status, &x.Error, &x.CurrentStep, &x.Progress, &x.LastJobType, &x.LastJobStatus); e != nil {
+		if e = rows.Scan(&x.ID, &x.StreamerID, &x.StreamerName, &x.Title, &x.ThumbnailURL, &x.Duration, &x.HasSource, &x.Status, &x.Error, &x.CurrentStep, &x.Progress, &x.LastJobType, &x.LastJobStatus); e != nil {
 			return nil, e
 		}
 		out = append(out, x)
@@ -68,15 +72,35 @@ func (s *Service) EnqueueDownload(ctx context.Context, id string) error {
 	return e
 }
 
-func (s *Service) EnqueueProcess(ctx context.Context, id, templateID string) error {
-	snapshot, e := s.templates.Snapshot(ctx, templateID)
+func (s *Service) EnqueueProcess(ctx context.Context, id, templateID string, draft *composition.Config) error {
+	var snapshot []byte
+	var e error
+	if draft == nil {
+		snapshot, e = s.templates.Snapshot(ctx, templateID)
+	} else {
+		config := *draft
+		config.Layers = append([]composition.Layer(nil), draft.Layers...)
+		var streamerName string
+		if e = s.db.QueryRow(ctx, `SELECT s.display_name FROM clips c JOIN streamers s ON s.id=c.streamer_id WHERE c.id=$1`, id).Scan(&streamerName); e != nil {
+			if e == pgx.ErrNoRows {
+				return fmt.Errorf("clip not found")
+			}
+			return e
+		}
+		for index := range config.Layers {
+			if config.Layers[index].Type == "text" && config.Layers[index].TextSource == "streamer_name" {
+				config.Layers[index].Text = streamerName
+			}
+		}
+		snapshot, e = s.templates.SnapshotConfig(ctx, templateID, config)
+	}
 	if e != nil {
 		return e
 	}
 	var jobID string
 	e = s.db.QueryRow(ctx, `INSERT INTO processing_jobs(clip_id,type,template_id,template_snapshot)
 		SELECT c.id,'process',$2,$3 FROM clips c
-		WHERE c.id=$1 AND c.status='downloaded'
+		WHERE c.id=$1 AND c.status IN ('downloaded','completed')
 		AND NOT EXISTS (SELECT 1 FROM processing_jobs j WHERE j.clip_id=c.id AND j.type='process' AND j.status IN ('pending','running'))
 		ON CONFLICT DO NOTHING RETURNING id`, id, templateID, snapshot).Scan(&jobID)
 	if e == pgx.ErrNoRows {

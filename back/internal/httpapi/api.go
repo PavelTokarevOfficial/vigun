@@ -11,8 +11,11 @@ import (
 	"github.com/finde-clip/finde-v2/back/internal/streamer"
 	"github.com/finde-clip/finde-v2/back/internal/videotemplate"
 	"github.com/go-chi/chi/v5"
+	"io"
 	"log/slog"
+	"mime"
 	"net/http"
+	"strconv"
 	"time"
 )
 
@@ -58,11 +61,13 @@ func (a *API) Router() http.Handler {
 		r.Post("/", a.createTemplate)
 		r.Get("/{id}", a.getTemplate)
 		r.Put("/{id}", a.updateTemplate)
+		r.Put("/{id}/default", a.setDefaultTemplate)
 		r.Post("/{id}/duplicate", a.duplicateTemplate)
 		r.Delete("/{id}", a.deleteTemplate)
 	})
 	r.Post("/api/clips/import", a.importClip)
 	r.Get("/api/clips", a.localClips)
+	r.Get("/api/clips/{id}/source", a.clipSource)
 	r.Delete("/api/clips/{id}", a.deleteClip)
 	r.Post("/api/clips/{id}/download", a.download)
 	r.Post("/api/clips/{id}/process", a.process)
@@ -70,6 +75,8 @@ func (a *API) Router() http.Handler {
 	r.Get("/api/jobs", a.listJobs)
 	r.Get("/api/jobs/{id}", a.getJob)
 	r.Get("/api/videos", a.readyVideos)
+	r.Get("/api/videos/{id}/download", a.downloadVideo)
+	r.Delete("/api/videos/{id}", a.deleteVideo)
 	return r
 }
 func (a *API) listJobs(w http.ResponseWriter, r *http.Request) {
@@ -95,6 +102,42 @@ func (a *API) readyVideos(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	write(w, 200, map[string]any{"data": x})
+}
+func (a *API) downloadVideo(w http.ResponseWriter, r *http.Request) {
+	object, filename, e := a.videos.Download(r.Context(), chi.URLParam(r, "id"))
+	if e != nil {
+		fail(w, 404, e)
+		return
+	}
+	defer object.Body.Close()
+
+	contentType := object.ContentType
+	if contentType == "" {
+		contentType = "video/mp4"
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": filename}))
+	if object.Size >= 0 {
+		w.Header().Set("Content-Length", strconv.FormatInt(object.Size, 10))
+	}
+	if _, e = io.Copy(w, object.Body); e != nil {
+		a.log.Error("stream rendered video", "video_id", chi.URLParam(r, "id"), "error", e)
+	}
+}
+func (a *API) deleteVideo(w http.ResponseWriter, r *http.Request) {
+	if e := a.videos.Delete(r.Context(), chi.URLParam(r, "id")); e != nil {
+		fail(w, 422, e)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+func (a *API) clipSource(w http.ResponseWriter, r *http.Request) {
+	url, e := a.library.SourceURL(r.Context(), chi.URLParam(r, "id"))
+	if e != nil {
+		fail(w, 404, e)
+		return
+	}
+	write(w, 200, map[string]any{"data": map[string]string{"url": url}})
 }
 func (a *API) remoteClips(w http.ResponseWriter, r *http.Request) {
 	startedAt, endedAt, e := clipWindow(r)
@@ -175,7 +218,16 @@ func (a *API) process(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, errText("templateId is required"))
 		return
 	}
-	if e := a.clips.EnqueueProcess(r.Context(), chi.URLParam(r, "id"), in.TemplateID); e != nil {
+	var config *composition.Config
+	if len(in.Config) > 0 && string(in.Config) != "null" {
+		parsed, e := composition.ParseConfig(in.Config)
+		if e != nil {
+			fail(w, 400, e)
+			return
+		}
+		config = &parsed
+	}
+	if e := a.clips.EnqueueProcess(r.Context(), chi.URLParam(r, "id"), in.TemplateID, config); e != nil {
 		fail(w, 422, e)
 		return
 	}
@@ -183,7 +235,8 @@ func (a *API) process(w http.ResponseWriter, r *http.Request) {
 }
 
 type processInput struct {
-	TemplateID string `json:"templateId"`
+	TemplateID string          `json:"templateId"`
+	Config     json.RawMessage `json:"config"`
 }
 
 func (a *API) retry(w http.ResponseWriter, r *http.Request) {
@@ -201,7 +254,7 @@ func (a *API) download(w http.ResponseWriter, r *http.Request) {
 	write(w, 202, map[string]string{"status": "queued"})
 }
 func (a *API) deleteClip(w http.ResponseWriter, r *http.Request) {
-	if e := a.library.DeleteClip(r.Context(), chi.URLParam(r, "id")); e != nil {
+	if e := a.library.DeleteSourceOrClip(r.Context(), chi.URLParam(r, "id")); e != nil {
 		fail(w, 422, e)
 		return
 	}
@@ -439,6 +492,13 @@ func (a *API) updateTemplate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	write(w, 200, map[string]any{"data": item})
+}
+func (a *API) setDefaultTemplate(w http.ResponseWriter, r *http.Request) {
+	if e := a.templates.SetDefault(r.Context(), chi.URLParam(r, "id")); e != nil {
+		fail(w, 422, e)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 func (a *API) duplicateTemplate(w http.ResponseWriter, r *http.Request) {
 	item, e := a.templates.Duplicate(r.Context(), chi.URLParam(r, "id"))

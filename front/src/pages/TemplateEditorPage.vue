@@ -2,9 +2,14 @@
 import { ArrowLeft, Redo2, Save, Undo2 } from '@lucide/vue'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
-import type { Asset } from '@/entities/asset/model/types'
+import type {
+  Asset,
+  AssetFolder,
+  AssetLibrary,
+} from '@/entities/asset/model/types'
 import {
   createDefaultConfig,
+  normalizeConfig,
   type VideoTemplate,
 } from '@/entities/template/model/types'
 import { useTemplateEditor } from '@/features/template-editor/model/useTemplateEditor'
@@ -20,6 +25,7 @@ const router = useRouter()
 const isNew = computed(() => route.params.id === 'new')
 const editor = useTemplateEditor(createDefaultConfig())
 const assets = ref<Asset[]>([])
+const folders = ref<AssetFolder[]>([])
 const title = ref('Новый шаблон')
 const description = ref('')
 const previewAssetId = ref<string | null>(null)
@@ -30,8 +36,9 @@ const saving = ref(false)
 async function load() {
   loading.value = true
   try {
-    const assetResponse = await fetch('/api/assets')
-    assets.value = (await readData<{ assets: Asset[] }>(assetResponse)).assets
+    const library = await readData<AssetLibrary>(await fetch('/api/assets'))
+    assets.value = library.assets
+    folders.value = library.folders
     if (!isNew.value) {
       const item = await readData<VideoTemplate>(
         await fetch(`/api/templates/${route.params.id}`),
@@ -39,7 +46,7 @@ async function load() {
       title.value = item.name
       description.value = item.description
       previewAssetId.value = item.previewAssetId
-      editor.replace(item.config)
+      editor.replace(normalizeConfig(item.config))
     }
   } catch (cause) {
     error.value =
@@ -53,7 +60,11 @@ async function save() {
   error.value = ''
   const missingAsset = editor.draft.value.layers.find(
     (layer) =>
-      ['asset_video', 'image', 'gif', 'audio'].includes(layer.type) &&
+      (layer.type === 'image' ||
+        layer.type === 'gif' ||
+        layer.type === 'asset_video' ||
+        (layer.type === 'video' && layer.source === 'asset') ||
+        layer.type === 'audio') &&
       !layer.assetId,
   )
   if (missingAsset) {
@@ -115,7 +126,8 @@ onBeforeRouteLeave(() =>
           {{ isNew ? 'Новый шаблон' : 'Редактор шаблона' }}
         </h1>
         <p class="mt-1 text-slate-600">
-          Перетаскивайте и растягивайте слои прямо на уменьшенном canvas 9:16.
+          Соберите базовую композицию. Перед каждым рендером её можно изменить,
+          не затрагивая сохранённый шаблон.
         </p>
       </div>
       <div class="flex flex-wrap gap-2">
@@ -159,12 +171,14 @@ onBeforeRouteLeave(() =>
       <TemplateCanvas
         :config="editor.draft.value"
         :selected-layer-id="editor.selectedLayerID.value"
+        :assets="assets"
         @select="editor.selectedLayerID.value = $event"
         @update="editor.updateLayer"
       />
       <PropertiesPanel
         :layer="editor.selectedLayer.value"
         :assets="assets"
+        :folders="folders"
         @update="editor.selectedLayer.value && editor.updateLayer(editor.selectedLayer.value.id, $event)"
       />
     </div>

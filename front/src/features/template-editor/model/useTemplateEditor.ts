@@ -44,6 +44,10 @@ export function useTemplateEditor(initial: TemplateConfig) {
     })
   }
 
+  function updateConfig(patch: Partial<TemplateConfig>) {
+    apply({ ...draft.value, ...patch })
+  }
+
   function addLayer(type: LayerType) {
     const id = `${type}-${crypto.randomUUID().slice(0, 8)}`
     const layer: Layer = {
@@ -57,7 +61,10 @@ export function useTemplateEditor(initial: TemplateConfig) {
       visible: true,
       opacity: 1,
       fit: 'contain',
+      ...(type === 'video' ? { source: 'clip' as const } : {}),
       ...(type === 'text' ? { text: 'Новый текст' } : {}),
+      ...(type === 'text' ? { textSource: 'custom' as const } : {}),
+      ...(type === 'blur' ? { filters: { blur: 18, brightness: -0.2 } } : {}),
       ...(type === 'color' ? { color: '#111827' } : {}),
       ...(type === 'subtitles'
         ? {
@@ -137,6 +144,7 @@ export function useTemplateEditor(initial: TemplateConfig) {
     canUndo,
     canRedo,
     updateLayer,
+    updateConfig,
     addLayer,
     removeLayer,
     duplicateLayer,
@@ -150,6 +158,8 @@ export function useTemplateEditor(initial: TemplateConfig) {
 
 function layerName(type: LayerType) {
   return {
+    video: 'Видео',
+    blur: 'Блюр',
     input_video: 'Исходный клип',
     asset_video: 'Видео-ассет',
     image: 'Изображение',

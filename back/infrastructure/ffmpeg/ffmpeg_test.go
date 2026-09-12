@@ -88,3 +88,47 @@ func TestScaleFilterRoundsOddContainDimensionsDown(t *testing.T) {
 		t.Fatalf("odd dimension was not normalized: %s", filter)
 	}
 }
+
+func TestBuildFilterSupportsVideoSourceAndBlurBlock(t *testing.T) {
+	config := composition.Config{
+		Version: composition.CurrentVersion,
+		Canvas:  composition.Canvas{Width: 1080, Height: 1920, FPS: 30, Background: "#000000"},
+		Layers: []composition.Layer{
+			{ID: "video", Type: "video", Source: "clip", Width: 1080, Height: 1920, Visible: true, Opacity: 1, Fit: "cover"},
+			{ID: "blur", Type: "blur", X: 100, Y: 200, Width: 400, Height: 300, Visible: true, Opacity: 0.7, Filters: composition.Filters{Blur: 18, Brightness: -0.3}},
+		},
+	}
+	filter, video, _, err := buildFilter(config, "", map[string]int{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fragment := range []string{"[0:v]scale=", "split=2", "crop=400:300:100:200", "boxblur=18:10", "eq=brightness=-0.3", "colorchannelmixer=aa=0.7"} {
+		if !strings.Contains(filter, fragment) {
+			t.Fatalf("filter does not contain %q: %s", fragment, filter)
+		}
+	}
+	if video != "[base2]" {
+		t.Fatalf("unexpected output label %q", video)
+	}
+}
+
+func TestBuildFilterConcatenatesTimelineSegments(t *testing.T) {
+	config := composition.Config{
+		Version:  composition.CurrentVersion,
+		Canvas:   composition.Canvas{Width: 1080, Height: 1920, FPS: 30, Background: "#000000"},
+		Timeline: &composition.Timeline{Segments: []composition.Segment{{ID: "a", Start: 1, End: 3}, {ID: "b", Start: 5, End: 8}}},
+		Layers:   []composition.Layer{{ID: "video", Type: "video", Source: "clip", Width: 1080, Height: 1920, Visible: true, Opacity: 1}},
+	}
+	filter, _, audio, err := buildFilter(config, "", map[string]int{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fragment := range []string{"[0:v]trim=start=1:end=3", "[0:v]trim=start=5:end=8", "concat=n=2:v=1:a=0", "[0:a]atrim=start=1:end=3", "concat=n=2:v=0:a=1[clipaudio]"} {
+		if !strings.Contains(filter, fragment) {
+			t.Fatalf("timeline filter does not contain %q: %s", fragment, filter)
+		}
+	}
+	if audio != "[clipaudio]" {
+		t.Fatalf("unexpected timeline audio label %q", audio)
+	}
+}

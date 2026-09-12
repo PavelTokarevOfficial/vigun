@@ -20,6 +20,7 @@ type Template struct {
 	Description    string             `json:"description"`
 	PreviewAssetID *string            `json:"previewAssetId"`
 	PreviewURL     string             `json:"previewUrl,omitempty"`
+	IsDefault      bool               `json:"isDefault"`
 	ConfigVersion  int                `json:"configVersion"`
 	Config         composition.Config `json:"config"`
 	CreatedAt      time.Time          `json:"createdAt"`
@@ -43,8 +44,8 @@ func New(db *pgxpool.Pool, storage media.Storage) *Service {
 }
 
 func (s *Service) List(ctx context.Context) ([]Template, error) {
-	rows, err := s.db.Query(ctx, `SELECT t.id,t.name,t.description,t.preview_asset_id,t.config_version,t.config,t.created_at,t.updated_at,COALESCE(a.storage_key,'')
-		FROM video_templates t LEFT JOIN assets a ON a.id=t.preview_asset_id ORDER BY t.updated_at DESC`)
+	rows, err := s.db.Query(ctx, `SELECT t.id,t.name,t.description,t.preview_asset_id,t.is_default,t.config_version,t.config,t.created_at,t.updated_at,COALESCE(a.storage_key,'')
+		FROM video_templates t LEFT JOIN assets a ON a.id=t.preview_asset_id ORDER BY t.is_default DESC,t.updated_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -67,7 +68,7 @@ func (s *Service) List(ctx context.Context) ([]Template, error) {
 }
 
 func (s *Service) Get(ctx context.Context, id string) (Template, error) {
-	row := s.db.QueryRow(ctx, `SELECT t.id,t.name,t.description,t.preview_asset_id,t.config_version,t.config,t.created_at,t.updated_at,COALESCE(a.storage_key,'')
+	row := s.db.QueryRow(ctx, `SELECT t.id,t.name,t.description,t.preview_asset_id,t.is_default,t.config_version,t.config,t.created_at,t.updated_at,COALESCE(a.storage_key,'')
 		FROM video_templates t LEFT JOIN assets a ON a.id=t.preview_asset_id WHERE t.id=$1`, id)
 	item, key, err := scanTemplate(row)
 	if err == pgx.ErrNoRows {
@@ -103,12 +104,17 @@ func (s *Service) Create(ctx context.Context, in Input) (Template, error) {
 	}
 	var item Template
 	err = tx.QueryRow(ctx, `INSERT INTO video_templates(name,description,preview_asset_id,config_version,config) VALUES($1,$2,$3,$4,$5)
-		RETURNING id,name,description,preview_asset_id,config_version,config,created_at,updated_at`, strings.TrimSpace(in.Name), strings.TrimSpace(in.Description), in.PreviewAssetID, in.Config.Version, configJSON).Scan(&item.ID, &item.Name, &item.Description, &item.PreviewAssetID, &item.ConfigVersion, &configJSON, &item.CreatedAt, &item.UpdatedAt)
+		RETURNING id,name,description,preview_asset_id,is_default,config_version,config,created_at,updated_at`, strings.TrimSpace(in.Name), strings.TrimSpace(in.Description), in.PreviewAssetID, in.Config.Version, configJSON).Scan(&item.ID, &item.Name, &item.Description, &item.PreviewAssetID, &item.IsDefault, &item.ConfigVersion, &configJSON, &item.CreatedAt, &item.UpdatedAt)
 	if err != nil {
 		return Template{}, uniqueError(err)
 	}
 	if item.Config, err = composition.ParseConfig(configJSON); err != nil {
 		return Template{}, err
+	}
+	if cmd, defaultErr := tx.Exec(ctx, `UPDATE video_templates SET is_default=true WHERE id=$1 AND NOT EXISTS (SELECT 1 FROM video_templates WHERE is_default)`, item.ID); defaultErr != nil {
+		return Template{}, defaultErr
+	} else if cmd.RowsAffected() > 0 {
+		item.IsDefault = true
 	}
 	if err = s.replaceReferences(ctx, tx, item.ID, in.Config.AssetIDs()); err != nil {
 		return Template{}, err
@@ -140,7 +146,7 @@ func (s *Service) Update(ctx context.Context, id string, in Input) (Template, er
 	}
 	var item Template
 	err = tx.QueryRow(ctx, `UPDATE video_templates SET name=$2,description=$3,preview_asset_id=$4,config_version=$5,config=$6,updated_at=now() WHERE id=$1
-		RETURNING id,name,description,preview_asset_id,config_version,config,created_at,updated_at`, id, strings.TrimSpace(in.Name), strings.TrimSpace(in.Description), in.PreviewAssetID, in.Config.Version, configJSON).Scan(&item.ID, &item.Name, &item.Description, &item.PreviewAssetID, &item.ConfigVersion, &configJSON, &item.CreatedAt, &item.UpdatedAt)
+		RETURNING id,name,description,preview_asset_id,is_default,config_version,config,created_at,updated_at`, id, strings.TrimSpace(in.Name), strings.TrimSpace(in.Description), in.PreviewAssetID, in.Config.Version, configJSON).Scan(&item.ID, &item.Name, &item.Description, &item.PreviewAssetID, &item.IsDefault, &item.ConfigVersion, &configJSON, &item.CreatedAt, &item.UpdatedAt)
 	if err == pgx.ErrNoRows {
 		return Template{}, fmt.Errorf("template not found")
 	}
@@ -168,9 +174,12 @@ func (s *Service) Duplicate(ctx context.Context, id string) (Template, error) {
 }
 
 func (s *Service) Delete(ctx context.Context, id string) error {
-	var active bool
-	if err := s.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM processing_jobs WHERE template_id=$1 AND status IN ('pending','running'))`, id).Scan(&active); err != nil {
+	var active, isDefault bool
+	if err := s.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM processing_jobs WHERE template_id=$1 AND status IN ('pending','running')),COALESCE((SELECT is_default FROM video_templates WHERE id=$1),false)`, id).Scan(&active, &isDefault); err != nil {
 		return err
+	}
+	if isDefault {
+		return fmt.Errorf("default template cannot be deleted; choose another default first")
 	}
 	if active {
 		return fmt.Errorf("template has an active processing job")
@@ -183,6 +192,28 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 		return fmt.Errorf("template not found")
 	}
 	return nil
+}
+
+func (s *Service) SetDefault(ctx context.Context, id string) error {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	var exists bool
+	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM video_templates WHERE id=$1)`, id).Scan(&exists); err != nil {
+		return err
+	}
+	if !exists {
+		return fmt.Errorf("template not found")
+	}
+	if _, err = tx.Exec(ctx, `UPDATE video_templates SET is_default=false WHERE is_default`); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(ctx, `UPDATE video_templates SET is_default=true,updated_at=now() WHERE id=$1`, id); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 // Snapshot validates and resolves each referenced asset into an immutable S3 key.
@@ -201,17 +232,35 @@ func (s *Service) Snapshot(ctx context.Context, id string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	return s.snapshotConfig(ctx, templateID, name, config)
+}
+
+// SnapshotConfig stores an edited render draft without mutating the base template.
+func (s *Service) SnapshotConfig(ctx context.Context, id string, config composition.Config) ([]byte, error) {
+	var name string
+	if err := s.db.QueryRow(ctx, `SELECT name FROM video_templates WHERE id=$1`, id).Scan(&name); err == pgx.ErrNoRows {
+		return nil, fmt.Errorf("template not found")
+	} else if err != nil {
+		return nil, err
+	}
+	if err := config.Validate(); err != nil {
+		return nil, err
+	}
+	return s.snapshotConfig(ctx, id, name, config)
+}
+
+func (s *Service) snapshotConfig(ctx context.Context, id, name string, config composition.Config) ([]byte, error) {
 	refs, err := s.assetSnapshots(ctx, config)
 	if err != nil {
 		return nil, err
 	}
-	return json.Marshal(composition.Snapshot{Version: composition.CurrentVersion, TemplateID: templateID, TemplateName: name, Config: config, Assets: refs})
+	return json.Marshal(composition.Snapshot{Version: composition.CurrentVersion, TemplateID: id, TemplateName: name, Config: config, Assets: refs})
 }
 
 // DefaultID is used only to retry a legacy job created before templates existed.
 func (s *Service) DefaultID(ctx context.Context) (string, error) {
 	var id string
-	err := s.db.QueryRow(ctx, `SELECT id FROM video_templates ORDER BY created_at LIMIT 1`).Scan(&id)
+	err := s.db.QueryRow(ctx, `SELECT id FROM video_templates ORDER BY is_default DESC,created_at LIMIT 1`).Scan(&id)
 	if err == pgx.ErrNoRows {
 		return "", fmt.Errorf("no video templates exist")
 	}
@@ -286,7 +335,7 @@ func scanTemplate(row templateRow) (Template, string, error) {
 	var item Template
 	var raw []byte
 	var key string
-	err := row.Scan(&item.ID, &item.Name, &item.Description, &item.PreviewAssetID, &item.ConfigVersion, &raw, &item.CreatedAt, &item.UpdatedAt, &key)
+	err := row.Scan(&item.ID, &item.Name, &item.Description, &item.PreviewAssetID, &item.IsDefault, &item.ConfigVersion, &raw, &item.CreatedAt, &item.UpdatedAt, &key)
 	if err != nil {
 		return Template{}, "", err
 	}

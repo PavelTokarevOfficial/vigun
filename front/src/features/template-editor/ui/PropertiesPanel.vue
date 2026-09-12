@@ -1,104 +1,186 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import type { Asset } from '@/entities/asset/model/types'
+import { FolderOpen, Trash2 } from '@lucide/vue'
+import { computed, ref } from 'vue'
+import type {
+  Asset,
+  AssetFolder,
+  AssetKind,
+} from '@/entities/asset/model/types'
 import type { Layer } from '@/entities/template/model/types'
+import AppButton from '@/shared/ui/AppButton.vue'
+import AssetPickerDialog from './AssetPickerDialog.vue'
 
-const props = defineProps<{ layer: Layer | null; assets: Asset[] }>()
+const props = defineProps<{
+  layer: Layer | null
+  assets: Asset[]
+  folders: AssetFolder[]
+}>()
 const emit = defineEmits<{ update: [patch: Partial<Layer>] }>()
+const pickerOpen = ref(false)
 
-const isAssetLayer = computed(() =>
-  ['asset_video', 'image', 'gif', 'audio'].includes(props.layer?.type ?? ''),
+const isVideo = computed(() =>
+  ['video', 'input_video', 'asset_video'].includes(props.layer?.type ?? ''),
 )
-const compatibleAssets = computed(() => {
-  const type = props.layer?.type
-  if (type === 'asset_video')
-    return props.assets.filter((asset) => asset.kind === 'video')
-  if (type === 'image')
-    return props.assets.filter((asset) => asset.kind === 'image')
-  if (type === 'gif')
-    return props.assets.filter((asset) => asset.kind === 'gif')
-  if (type === 'audio')
-    return props.assets.filter((asset) => asset.kind === 'audio')
-  return []
+const videoSource = computed(() => {
+  if (props.layer?.type === 'input_video') return 'clip'
+  if (props.layer?.type === 'asset_video') return 'asset'
+  return props.layer?.source ?? 'clip'
 })
+const needsAsset = computed(
+  () =>
+    props.layer?.type === 'image' ||
+    props.layer?.type === 'gif' ||
+    (isVideo.value && videoSource.value === 'asset'),
+)
+const pickerKinds = computed<AssetKind[]>(() =>
+  isVideo.value ? ['video'] : ['image', 'gif'],
+)
+const selectedAsset = computed(() =>
+  props.assets.find((asset) => asset.id === props.layer?.assetId),
+)
+
 function numberValue(event: Event) {
   return Number((event.target as HTMLInputElement).value)
+}
+function setVideoSource(source: 'clip' | 'asset') {
+  emit('update', {
+    type: 'video',
+    source,
+    ...(source === 'clip' ? { assetId: undefined } : {}),
+  })
 }
 </script>
 
 <template>
-  <aside class="rounded-xl border border-slate-200 bg-white p-3">
+  <aside class="rounded-xl border border-slate-200 bg-white p-4">
     <h2 class="font-semibold">Свойства</h2>
     <p v-if="!layer" class="mt-3 text-sm text-slate-500">
-      Выберите слой на canvas или в списке.
+      Выберите слой на рабочей зоне или в списке.
     </p>
-    <div v-else class="mt-3 space-y-3">
-      <label class="block text-sm"
+    <div v-else class="mt-4 space-y-4">
+      <label class="block text-sm font-medium"
         >Название<input
-          class="mt-1 w-full"
+          class="mt-1 w-full font-normal"
           :value="layer.name"
           @change="emit('update', { name: ($event.target as HTMLInputElement).value })"
         ></label
       >
-      <label v-if="layer.type === 'text'" class="block text-sm"
-        >Текст<textarea
-          class="mt-1 w-full rounded border border-slate-300 px-3 py-2"
-          :value="layer.text"
-          @change="emit('update', { text: ($event.target as HTMLTextAreaElement).value })"
-        /></label
-      >
-      <label v-if="layer.type === 'color'" class="block text-sm"
-        >Цвет<input
-          class="mt-1 h-10 w-full"
-          type="color"
-          :value="layer.color || '#111827'"
-          @change="emit('update', { color: ($event.target as HTMLInputElement).value })"
-        ></label
-      >
-      <div
-        v-if="isAssetLayer"
-        class="rounded-lg border border-violet-200 bg-violet-50 p-2"
-      >
-        <p class="text-sm font-medium">Источник слоя</p>
-        <p v-if="!compatibleAssets.length" class="mt-1 text-xs text-slate-600">
-          Подходящих файлов нет. Сначала загрузите {{ layer.type }} в разделе
-          «Ассеты».
-        </p>
-        <div v-else class="mt-2 grid gap-2">
-          <button
-            v-for="asset in compatibleAssets"
-            :key="asset.id"
-            type="button"
-            class="flex items-center gap-2 rounded border bg-white p-2 text-left text-sm hover:border-violet-500"
-            :class="layer.assetId === asset.id ? 'border-violet-600 ring-1 ring-violet-500' : 'border-slate-200'"
-            @click="emit('update', { assetId: asset.id })"
+
+      <fieldset v-if="isVideo" class="space-y-2">
+        <legend class="text-sm font-medium">Источник видео</legend>
+        <label
+          class="flex cursor-pointer items-center gap-2 rounded-lg border border-slate-200 p-2 text-sm"
+        >
+          <input
+            type="radio"
+            name="video-source"
+            :checked="videoSource === 'clip'"
+            @change="setVideoSource('clip')"
           >
-            <img
-              v-if="asset.kind === 'image' || asset.kind === 'gif'"
-              :src="asset.url"
-              :alt="asset.name"
-              class="size-9 rounded object-cover"
-            >
-            <span class="min-w-0 truncate">{{ asset.name }}</span>
+          Twitch-клип
+        </label>
+        <label
+          class="flex cursor-pointer items-center gap-2 rounded-lg border border-slate-200 p-2 text-sm"
+        >
+          <input
+            type="radio"
+            name="video-source"
+            :checked="videoSource === 'asset'"
+            @change="setVideoSource('asset')"
+          >
+          Видео из хранилища
+        </label>
+      </fieldset>
+
+      <div v-if="needsAsset" class="rounded-xl border border-slate-200 p-3">
+        <p class="text-sm font-medium">Файл</p>
+        <div
+          v-if="selectedAsset"
+          class="mt-2 flex items-center gap-3 rounded-lg bg-slate-50 p-2"
+        >
+          <img
+            v-if="selectedAsset.kind === 'image' || selectedAsset.kind === 'gif'"
+            :src="selectedAsset.url"
+            :alt="selectedAsset.name"
+            class="size-11 rounded object-cover"
+          >
+          <div
+            v-else
+            class="flex size-11 items-center justify-center rounded bg-violet-100 text-xs text-violet-700"
+          >
+            MP4
+          </div>
+          <span class="min-w-0 flex-1 truncate text-sm">{{
+            selectedAsset.name
+          }}</span>
+          <button
+            type="button"
+            class="rounded p-2 text-red-600 hover:bg-red-50"
+            aria-label="Убрать выбранный файл"
+            @click="emit('update', { assetId: undefined })"
+          >
+            <Trash2 class="size-4" />
           </button>
         </div>
-        <label class="mt-2 block text-sm"
-          >Или выберите из списка<select
-            class="mt-1 w-full"
-            :value="layer.assetId"
-            @change="emit('update', { assetId: ($event.target as HTMLSelectElement).value })"
-          >
-            <option value="">Выберите файл</option>
-            <option
-              v-for="asset in compatibleAssets"
-              :key="asset.id"
-              :value="asset.id"
-            >
-              {{ asset.name }} · {{ asset.kind }}
-            </option>
-          </select></label
+        <p v-else class="mt-2 text-sm text-slate-500">Файл не выбран</p>
+        <AppButton
+          class="mt-3 w-full"
+          variant="secondary"
+          @click="pickerOpen = true"
         >
+          <FolderOpen class="mr-1 inline size-4" />Выбрать
+        </AppButton>
       </div>
+
+      <template v-if="layer.type === 'text'">
+        <label class="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            :checked="layer.textSource === 'streamer_name'"
+            @change="emit('update', { textSource: ($event.target as HTMLInputElement).checked ? 'streamer_name' : 'custom' })"
+          >
+          Показывать название Twitch-канала
+        </label>
+        <label
+          v-if="layer.textSource !== 'streamer_name'"
+          class="block text-sm font-medium"
+          >Текст<textarea
+            class="mt-1 w-full rounded border border-slate-300 px-3 py-2 font-normal"
+            :value="layer.text"
+            @change="emit('update', { text: ($event.target as HTMLTextAreaElement).value })"
+          /></label
+        >
+      </template>
+
+      <template v-if="layer.type === 'blur'">
+        <label class="block text-sm font-medium"
+          >Сила блюра {{ layer.filters?.blur ?? 18
+          }}<input
+            class="mt-1 w-full"
+            type="range"
+            min="0"
+            max="50"
+            step="1"
+            :value="layer.filters?.blur ?? 18"
+            @input="emit('update', { filters: { ...layer.filters, blur: numberValue($event) } })"
+          ></label
+        >
+        <label class="block text-sm font-medium"
+          >Затемнение
+          {{
+            Math.round(Math.abs(layer.filters?.brightness ?? -0.2) * 100)
+          }}%<input
+            class="mt-1 w-full"
+            type="range"
+            min="0"
+            max="1"
+            step="0.05"
+            :value="Math.abs(layer.filters?.brightness ?? -0.2)"
+            @input="emit('update', { filters: { ...layer.filters, brightness: -numberValue($event) } })"
+          ></label
+        >
+      </template>
+
       <div v-if="layer.type !== 'audio'" class="grid grid-cols-2 gap-2">
         <label class="text-sm"
           >X<input
@@ -135,7 +217,8 @@ function numberValue(event: Event) {
           ></label
         >
       </div>
-      <label class="block text-sm"
+
+      <label class="block text-sm font-medium"
         >Прозрачность {{ Math.round(layer.opacity * 100) }}%<input
           class="mt-1 w-full"
           type="range"
@@ -146,11 +229,12 @@ function numberValue(event: Event) {
           @input="emit('update', { opacity: numberValue($event) })"
         ></label
       >
+
       <label
-        v-if="layer.type === 'input_video' || layer.type === 'asset_video' || layer.type === 'image' || layer.type === 'gif'"
-        class="block text-sm"
+        v-if="isVideo || layer.type === 'image' || layer.type === 'gif'"
+        class="block text-sm font-medium"
         >Вписывание<select
-          class="mt-1 w-full"
+          class="mt-1 w-full font-normal"
           :value="layer.fit || 'contain'"
           @change="emit('update', { fit: ($event.target as HTMLSelectElement).value as Layer['fit'] })"
         >
@@ -159,9 +243,10 @@ function numberValue(event: Event) {
           <option value="stretch">Растянуть</option>
         </select></label
       >
+
       <template v-if="layer.type === 'subtitles'">
         <label class="block text-sm"
-          >Размер шрифта FFmpeg<input
+          >Размер шрифта<input
             class="mt-1 w-full"
             type="number"
             min="1"
@@ -174,11 +259,21 @@ function numberValue(event: Event) {
             class="mt-1 w-full"
             type="number"
             min="0"
-            :value="layer.style?.outline || 2"
+            :value="layer.style?.outline ?? 2"
             @change="emit('update', { style: { ...layer.style, outline: numberValue($event) } })"
           ></label
         >
       </template>
     </div>
   </aside>
+
+  <AssetPickerDialog
+    :open="pickerOpen"
+    :assets="assets"
+    :folders="folders"
+    :kinds="pickerKinds"
+    :selected-id="layer?.assetId"
+    @close="pickerOpen = false"
+    @select="emit('update', { assetId: $event.id }); pickerOpen = false"
+  />
 </template>

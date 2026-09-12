@@ -3,13 +3,14 @@ package media
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Library removes a clip that is not currently being processed and every registered artifact.
-// Object deletion happens through Storage; PostgreSQL only retains media metadata.
+// Library removes source media or an entire clip that is not currently being processed.
+// Completed renders survive source deletion and remain available independently.
 type Library struct {
 	db      *pgxpool.Pool
 	storage Storage
@@ -19,7 +20,18 @@ func NewLibrary(db *pgxpool.Pool, storage Storage) *Library {
 	return &Library{db: db, storage: storage}
 }
 
-func (l *Library) DeleteClip(ctx context.Context, clipID string) error {
+func (l *Library) SourceURL(ctx context.Context, clipID string) (string, error) {
+	var key string
+	if err := l.db.QueryRow(ctx, `SELECT storage_key FROM media_files WHERE clip_id=$1 AND type='source' ORDER BY created_at DESC LIMIT 1`, clipID).Scan(&key); err != nil {
+		if err == pgx.ErrNoRows {
+			return "", fmt.Errorf("downloaded source not found")
+		}
+		return "", err
+	}
+	return l.storage.PresignGet(ctx, key, 15*time.Minute)
+}
+
+func (l *Library) DeleteSourceOrClip(ctx context.Context, clipID string) error {
 	tx, err := l.db.Begin(ctx)
 	if err != nil {
 		return err
@@ -46,8 +58,18 @@ func (l *Library) DeleteClip(ctx context.Context, clipID string) error {
 	if hasActiveJob {
 		return fmt.Errorf("clip has an active job and cannot be deleted")
 	}
+	var hasRender bool
+	if err = tx.QueryRow(ctx, `SELECT EXISTS(
+		SELECT 1 FROM media_files WHERE clip_id=$1 AND type='render'
+	)`, clipID).Scan(&hasRender); err != nil {
+		return err
+	}
 
-	rows, err := tx.Query(ctx, "SELECT storage_key FROM media_files WHERE clip_id=$1", clipID)
+	mediaQuery := "SELECT storage_key FROM media_files WHERE clip_id=$1"
+	if hasRender {
+		mediaQuery += " AND type<>'render'"
+	}
+	rows, err := tx.Query(ctx, mediaQuery, clipID)
 	if err != nil {
 		return err
 	}
@@ -71,8 +93,17 @@ func (l *Library) DeleteClip(ctx context.Context, clipID string) error {
 			return fmt.Errorf("delete %q from object storage: %w", key, err)
 		}
 	}
-	if _, err = tx.Exec(ctx, "DELETE FROM clips WHERE id=$1", clipID); err != nil {
-		return err
+	if hasRender {
+		if _, err = tx.Exec(ctx, "DELETE FROM media_files WHERE clip_id=$1 AND type<>'render'", clipID); err != nil {
+			return err
+		}
+		if _, err = tx.Exec(ctx, "UPDATE clips SET status='completed',error=NULL,updated_at=now() WHERE id=$1", clipID); err != nil {
+			return err
+		}
+	} else {
+		if _, err = tx.Exec(ctx, "DELETE FROM clips WHERE id=$1", clipID); err != nil {
+			return err
+		}
 	}
 	return tx.Commit(ctx)
 }

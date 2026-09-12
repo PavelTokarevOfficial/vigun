@@ -1,4 +1,6 @@
 export type LayerType =
+  | 'video'
+  | 'blur'
   | 'input_video'
   | 'asset_video'
   | 'image'
@@ -18,9 +20,11 @@ export type Layer = {
   height: number
   visible: boolean
   opacity: number
+  source?: 'clip' | 'asset'
   fit?: 'cover' | 'contain' | 'stretch'
   assetId?: string
   text?: string
+  textSource?: 'custom' | 'streamer_name'
   color?: string
   filters?: { blur?: number; brightness?: number }
   style?: {
@@ -37,7 +41,10 @@ export type TemplateConfig = {
   version: 1
   canvas: { width: number; height: number; fps: number; background: string }
   layers: Layer[]
+  timeline?: { segments: TimelineSegment[] }
 }
+
+export type TimelineSegment = { id: string; start: number; end: number }
 
 export type VideoTemplate = {
   id: string
@@ -45,6 +52,7 @@ export type VideoTemplate = {
   description: string
   previewAssetId: string | null
   previewUrl?: string
+  isDefault: boolean
   configVersion: number
   config: TemplateConfig
   createdAt: string
@@ -58,8 +66,9 @@ export function createDefaultConfig(): TemplateConfig {
     layers: [
       {
         id: 'background',
-        name: 'Размытый фон',
-        type: 'input_video',
+        name: 'Видео на фоне',
+        type: 'video',
+        source: 'clip',
         x: 0,
         y: 0,
         width: 1080,
@@ -67,12 +76,24 @@ export function createDefaultConfig(): TemplateConfig {
         visible: true,
         opacity: 1,
         fit: 'cover',
+      },
+      {
+        id: 'background-blur',
+        name: 'Блюр фона',
+        type: 'blur',
+        x: 0,
+        y: 0,
+        width: 1080,
+        height: 1920,
+        visible: true,
+        opacity: 1,
         filters: { blur: 25, brightness: -0.2 },
       },
       {
         id: 'clip',
-        name: 'Основной клип',
-        type: 'input_video',
+        name: 'Видео',
+        type: 'video',
+        source: 'clip',
         x: 0,
         y: 0,
         width: 1080,
@@ -101,5 +122,42 @@ export function createDefaultConfig(): TemplateConfig {
         },
       },
     ],
+  }
+}
+
+/** Converts templates created by the first editor into the compact v2 layer UI. */
+export function normalizeConfig(config: TemplateConfig): TemplateConfig {
+  return {
+    ...config,
+    canvas: { ...config.canvas },
+    layers: config.layers.flatMap((layer) => {
+      if (layer.type === 'input_video') {
+        const video: Layer = {
+          ...layer,
+          type: 'video',
+          source: 'clip',
+          filters: undefined,
+        }
+        if (layer.filters?.blur || layer.filters?.brightness) {
+          return [
+            video,
+            {
+              ...layer,
+              id: `${layer.id}-blur`,
+              name: `Блюр · ${layer.name}`,
+              type: 'blur',
+              opacity: 1,
+              fit: undefined,
+            } satisfies Layer,
+          ]
+        }
+        return [video]
+      }
+      if (layer.type === 'asset_video') {
+        return [{ ...layer, type: 'video', source: 'asset' }]
+      }
+      if (layer.type === 'gif') return [{ ...layer, type: 'image' }]
+      return [layer]
+    }),
   }
 }

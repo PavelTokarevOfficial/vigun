@@ -86,6 +86,11 @@ func (r *Runner) Process(ctx context.Context, in Input) (Result, error) {
 		if e != nil {
 			return out, e
 		}
+		if config.Timeline != nil {
+			if e = applyTimelineToSRT(sub, config.Timeline.Segments); e != nil {
+				return out, fmt.Errorf("retime subtitles: %w", e)
+			}
+		}
 		render := filepath.Join(d, "final.mp4")
 		if e = r.Media.Render(ctx, RenderInput{SourcePath: src, SubtitlePath: sub, OutputPath: render, Width: in.Width, Height: in.Height, Blur: in.Blur, Preset: in.Preset, Composition: config, AssetPaths: assets}); e != nil {
 			return out, fmt.Errorf("render: %w", e)
