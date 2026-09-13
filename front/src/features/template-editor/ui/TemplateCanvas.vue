@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Volume2, VolumeX } from '@lucide/vue'
 import {
   computed,
   nextTick,
@@ -39,6 +40,8 @@ const transformerRef = ref()
 const media = shallowRef<Record<string, HTMLImageElement | HTMLVideoElement>>(
   {},
 )
+const previewMuted = ref(true)
+const previewVolume = ref(1)
 let animationFrame = 0
 
 const assetByID = computed(
@@ -61,6 +64,11 @@ const timelinePosition = computed(() => {
   }
   return null
 })
+const hasVideoPreview = computed(() =>
+  Object.values(media.value).some(
+    (element) => element instanceof HTMLVideoElement,
+  ),
+)
 
 function isVideo(layer: Layer) {
   return ['video', 'input_video', 'asset_video'].includes(layer.type)
@@ -136,6 +144,7 @@ function loadMedia() {
       element.addEventListener('loadeddata', () => {
         media.value = { ...media.value }
         seekVideo(layer, element)
+        syncPreviewAudio()
         void element.play().catch(() => undefined)
       })
       next[layer.id] = element
@@ -154,6 +163,45 @@ function loadMedia() {
     if (!next[id] && element instanceof HTMLVideoElement) element.pause()
   }
   media.value = next
+  syncPreviewAudio()
+}
+
+function syncPreviewAudio() {
+  const activeVideos = props.config.layers
+    .filter((layer) => isVideo(layer) && activeLayer(layer))
+    .map((layer) => ({ layer, element: media.value[layer.id] }))
+    .filter(
+      (item): item is { layer: Layer; element: HTMLVideoElement } =>
+        item.element instanceof HTMLVideoElement,
+    )
+  const audible =
+    activeVideos.find(({ layer }) => usesClip(layer))?.element ??
+    activeVideos[0]?.element
+  for (const element of Object.values(media.value)) {
+    if (element instanceof HTMLVideoElement) {
+      element.volume = previewVolume.value
+      element.muted =
+        previewMuted.value || previewVolume.value === 0 || element !== audible
+    }
+  }
+  if (!previewMuted.value && audible) {
+    void audible.play().catch(() => undefined)
+  }
+}
+
+function togglePreviewSound() {
+  if (previewMuted.value && previewVolume.value === 0) {
+    previewVolume.value = 1
+  }
+  previewMuted.value = !previewMuted.value
+  syncPreviewAudio()
+}
+
+function updatePreviewVolume(event: Event) {
+  const value = Number((event.target as HTMLInputElement).value)
+  previewVolume.value = Math.min(1, Math.max(0, value))
+  previewMuted.value = previewVolume.value === 0
+  syncPreviewAudio()
 }
 
 function seekVideo(layer: Layer, element: HTMLVideoElement) {
@@ -331,6 +379,7 @@ watch(
       const element = media.value[layer.id]
       if (element instanceof HTMLVideoElement) seekVideo(layer, element)
     }
+    syncPreviewAudio()
   },
 )
 watch(() => [props.selectedLayerId, props.config.layers], updateTransformer, {
@@ -348,8 +397,34 @@ onBeforeUnmount(() => {
 
 <template>
   <div
-    class="flex min-h-[620px] items-center justify-center overflow-auto rounded-xl border border-slate-200 bg-white p-5"
+    class="relative flex min-h-[620px] items-center justify-center overflow-auto rounded-xl border border-slate-200 bg-white p-5"
   >
+    <div
+      v-if="hasVideoPreview"
+      class="absolute right-3 top-3 z-10 flex items-center gap-2 rounded-full border border-slate-200 bg-white/95 p-1.5 pr-3 text-slate-700 shadow-sm"
+    >
+      <button
+        type="button"
+        class="grid size-8 place-items-center rounded-full transition hover:bg-violet-50 hover:text-violet-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500"
+        :title="previewMuted ? 'Включить звук предпросмотра' : 'Выключить звук предпросмотра'"
+        :aria-label="previewMuted ? 'Включить звук предпросмотра' : 'Выключить звук предпросмотра'"
+        @click="togglePreviewSound"
+      >
+        <VolumeX v-if="previewMuted || previewVolume === 0" class="size-5" />
+        <Volume2 v-else class="size-5" />
+      </button>
+      <input
+        type="range"
+        min="0"
+        max="1"
+        step="0.05"
+        :value="previewVolume"
+        class="h-1.5 w-24 cursor-pointer accent-violet-600"
+        :aria-label="`Громкость предпросмотра ${Math.round(previewVolume * 100)}%`"
+        :title="`Громкость ${Math.round(previewVolume * 100)}%`"
+        @input="updatePreviewVolume"
+      >
+    </div>
     <div class="overflow-hidden rounded-lg border border-slate-300 shadow-xl">
       <v-stage
         ref="stageRef"
