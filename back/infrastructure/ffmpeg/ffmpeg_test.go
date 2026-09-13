@@ -215,6 +215,76 @@ func TestScaleFilterRoundsOddContainDimensionsDown(t *testing.T) {
 	}
 }
 
+func TestScaleFilterUsesTransparentPaddingForImages(t *testing.T) {
+	filter := scaleFilter(composition.Layer{Type: "image", Width: 640, Height: 640, Fit: "contain", Opacity: 1})
+	for _, fragment := range []string{"format=rgba", "pad=640:640", "color=black@0"} {
+		if !strings.Contains(filter, fragment) {
+			t.Fatalf("image contain filter does not contain %q: %s", fragment, filter)
+		}
+	}
+}
+
+func TestRenderKeepsImagePaddingAndSourceAlphaTransparent(t *testing.T) {
+	bin, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		t.Skip("ffmpeg is not installed")
+	}
+
+	dir := t.TempDir()
+	source := filepath.Join(dir, "source.mp4")
+	image := filepath.Join(dir, "overlay.png")
+	output := filepath.Join(dir, "transparent-image.mp4")
+	makeSource := exec.Command(bin, "-y", "-f", "lavfi", "-i", "color=c=red:s=64x96:r=10", "-f", "lavfi", "-i", "sine=frequency=800:sample_rate=48000", "-t", "1", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", source)
+	if log, runErr := makeSource.CombinedOutput(); runErr != nil {
+		t.Fatalf("create source video: %v: %s", runErr, log)
+	}
+	makeImage := exec.Command(bin, "-y", "-f", "lavfi", "-i", "nullsrc=s=32x16,format=rgba,geq=r=0:g=0:b=255:a='if(between(X,8,23)*between(Y,4,11),255,0)'", "-frames:v", "1", image)
+	if log, runErr := makeImage.CombinedOutput(); runErr != nil {
+		t.Fatalf("create transparent image: %v: %s", runErr, log)
+	}
+
+	config := composition.Config{
+		Version: composition.CurrentVersion,
+		Canvas:  composition.Canvas{Width: 64, Height: 96, FPS: 10, Background: "#000000"},
+		Layers: []composition.Layer{
+			{ID: "video", Type: "video", Source: "clip", Width: 64, Height: 96, Visible: true, Opacity: 1, Fit: "stretch"},
+			{ID: "image", Type: "image", AssetID: "overlay", X: 0, Y: 16, Width: 64, Height: 64, Visible: true, Opacity: 1, Fit: "contain"},
+		},
+	}
+	err = New(bin).Render(context.Background(), processing.RenderInput{
+		SourcePath:  source,
+		OutputPath:  output,
+		Preset:      "ultrafast",
+		Composition: config,
+		AssetPaths:  map[string]string{"overlay": image},
+	})
+	if err != nil {
+		t.Fatalf("render transparent image overlay: %v", err)
+	}
+
+	command := exec.Command(bin, "-v", "error", "-ss", "0.5", "-i", output, "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1")
+	frame, err := command.Output()
+	if err != nil || len(frame) < 64*96*3 {
+		t.Fatalf("read rendered frame: %v", err)
+	}
+	pixelAt := func(x, y int) []byte {
+		offset := (y*64 + x) * 3
+		return frame[offset : offset+3]
+	}
+	for name, pixel := range map[string][]byte{
+		"contain padding": pixelAt(32, 20),
+		"source alpha":    pixelAt(4, 36),
+	} {
+		if pixel[0] < 100 || pixel[0] <= pixel[2] {
+			t.Fatalf("%s is not transparent over red source: rgb=%v", name, pixel)
+		}
+	}
+	center := pixelAt(32, 48)
+	if center[2] < 100 || center[2] <= center[0] {
+		t.Fatalf("opaque image center is not blue: rgb=%v", center)
+	}
+}
+
 func TestBuildFilterSupportsVideoSourceAndBlurBlock(t *testing.T) {
 	config := composition.Config{
 		Version: composition.CurrentVersion,

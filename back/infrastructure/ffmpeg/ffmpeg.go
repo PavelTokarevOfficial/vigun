@@ -371,7 +371,11 @@ func scaleFilter(layer composition.Layer) string {
 	case "stretch":
 		base += fmt.Sprintf("%d:%d", width, height)
 	default:
-		base += fmt.Sprintf("%d:%d:force_original_aspect_ratio=decrease:force_divisible_by=2,pad=%d:%d:(ow-iw)/2:(oh-ih)/2:color=black", width, height, width, height)
+		if layer.Type == "image" || layer.Type == "gif" {
+			base = fmt.Sprintf("format=rgba,scale=%d:%d:force_original_aspect_ratio=decrease:force_divisible_by=2,pad=%d:%d:(ow-iw)/2:(oh-ih)/2:color=black@0", width, height, width, height)
+		} else {
+			base += fmt.Sprintf("%d:%d:force_original_aspect_ratio=decrease:force_divisible_by=2,pad=%d:%d:(ow-iw)/2:(oh-ih)/2:color=black", width, height, width, height)
+		}
 	}
 	if layer.Filters.Blur > 0 {
 		base += fmt.Sprintf(",boxblur=%d:10", layer.Filters.Blur)
