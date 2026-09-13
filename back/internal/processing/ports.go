@@ -24,6 +24,7 @@ type RenderInput struct {
 	Preset                               string
 	Composition                          composition.Config
 	AssetPaths                           map[string]string
+	SubtitlePaths                        map[string]string
 }
 type Job struct {
 	ID, ClipID, Type string

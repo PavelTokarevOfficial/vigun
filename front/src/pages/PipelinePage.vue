@@ -75,6 +75,8 @@ const selectedTemplate = ref<VideoTemplate | null>(null)
 const assets = ref<Asset[]>([])
 const folders = ref<AssetFolder[]>([])
 const sourceURL = ref('')
+const timelineTime = ref(0)
+const selectedTimelineSegmentID = ref<string | null>(null)
 const previewVideo = ref<Video | null>(null)
 const renderEditor = useTemplateEditor(createDefaultConfig())
 
@@ -103,7 +105,6 @@ const downloaded = computed(() =>
 const processClip = computed(
   () => clips.value.find((clip) => clip.id === processClipID.value) ?? null,
 )
-
 async function load() {
   try {
     const [clipResponse, videoResponse] = await Promise.all([
@@ -168,6 +169,7 @@ async function openTemplateChooser(id: string) {
   processStage.value = 'choose'
   selectedTemplate.value = null
   sourceURL.value = ''
+  timelineTime.value = 0
   try {
     const [templateResponse, assetResponse, sourceResponse] = await Promise.all(
       [
@@ -214,13 +216,102 @@ function chooseTemplate(template: VideoTemplate) {
       segments: [
         {
           id: `segment-${crypto.randomUUID().slice(0, 8)}`,
+          source: 'clip',
           start: 0,
           end: Math.max(0.1, processClip.value?.duration ?? 0.1),
+          sourceDuration: Math.max(0.1, processClip.value?.duration ?? 0.1),
         },
       ],
     },
   })
+  timelineTime.value = 0
+  selectedTimelineSegmentID.value = null
   processStage.value = 'edit'
+}
+
+function selectEditorLayer(id: string | null) {
+  selectedTimelineSegmentID.value = null
+  const source = renderEditor.draft.value.layers.find((item) => item.id === id)
+  if (!source) {
+    renderEditor.selectedLayerID.value = null
+    return
+  }
+  if (source.timelineSegmentId) {
+    let cursor = 0
+    for (const segment of renderEditor.draft.value.timeline?.segments ?? []) {
+      const duration = Math.max(0, segment.end - segment.start)
+      if (segment.id === source.timelineSegmentId) {
+        timelineTime.value = cursor + Math.min(0.05, duration / 2)
+        break
+      }
+      cursor += duration
+    }
+  }
+  const trackID = source.trackId ?? source.id
+  const active = renderEditor.draft.value.layers.find(
+    (layer) =>
+      (layer.trackId ?? layer.id) === trackID &&
+      timelineTime.value >= (layer.startTime ?? 0) &&
+      (layer.endTime === undefined || timelineTime.value <= layer.endTime),
+  )
+  renderEditor.selectedLayerID.value = active?.id ?? source.id
+}
+
+function updateEditorLayerTrack(
+  id: string,
+  patch: Partial<TemplateConfig['layers'][number]>,
+) {
+  const source = renderEditor.draft.value.layers.find(
+    (layer) => layer.id === id,
+  )
+  if (!source) return
+  const trackID = source.trackId ?? source.id
+  renderEditor.updateConfig({
+    layers: renderEditor.draft.value.layers.map((layer) =>
+      (layer.trackId ?? layer.id) === trackID ? { ...layer, ...patch } : layer,
+    ),
+  })
+}
+
+function addEditorLayer(type: Parameters<typeof renderEditor.addLayer>[0]) {
+  selectedTimelineSegmentID.value = null
+  renderEditor.addLayer(type)
+}
+
+function selectTimelineSegment(id: string) {
+  selectedTimelineSegmentID.value = id
+  renderEditor.selectedLayerID.value = null
+}
+
+function removeEditorLayer(id: string) {
+  const layer = renderEditor.draft.value.layers.find((item) => item.id === id)
+  if (!layer?.timelineSegmentId) {
+    renderEditor.removeLayer(id)
+    return
+  }
+  const timeline = renderEditor.draft.value.timeline
+  const trackID = layer.trackId ?? layer.id
+  const remainingLayers = renderEditor.draft.value.layers.filter(
+    (item) => (item.trackId ?? item.id) !== trackID,
+  )
+  const hasAnotherLinkedLayer = remainingLayers.some(
+    (item) => item.timelineSegmentId === layer.timelineSegmentId,
+  )
+  renderEditor.updateConfig({
+    layers: remainingLayers,
+    ...(timeline
+      ? {
+          timeline: {
+            segments: hasAnotherLinkedLayer
+              ? timeline.segments
+              : timeline.segments.filter(
+                  (segment) => segment.id !== layer.timelineSegmentId,
+                ),
+          },
+        }
+      : {}),
+  })
+  renderEditor.selectedLayerID.value = null
 }
 
 async function sendToRender() {
@@ -248,6 +339,8 @@ function closeProcessDialog() {
   selectedTemplate.value = null
   processStage.value = 'choose'
   sourceURL.value = ''
+  timelineTime.value = 0
+  selectedTimelineSegmentID.value = null
 }
 
 async function remove(clip: Clip) {
@@ -717,11 +810,11 @@ onBeforeUnmount(() => {
             <LayerPanel
               :layers="renderEditor.draft.value.layers"
               :selected-layer-id="renderEditor.selectedLayerID.value"
-              @select="renderEditor.selectedLayerID.value = $event"
-              @add="renderEditor.addLayer"
-              @update="renderEditor.updateLayer"
+              @select="selectEditorLayer"
+              @add="addEditorLayer"
+              @update="updateEditorLayerTrack"
               @duplicate="renderEditor.duplicateLayer"
-              @remove="renderEditor.removeLayer"
+              @remove="removeEditorLayer"
               @move="renderEditor.moveLayer"
             />
             <TemplateCanvas
@@ -729,16 +822,17 @@ onBeforeUnmount(() => {
               :selected-layer-id="renderEditor.selectedLayerID.value"
               :assets="assets"
               :source-url="sourceURL"
+              :timeline-time="timelineTime"
               :thumbnail-url="processClip?.thumbnailUrl"
               :streamer-name="processClip?.streamerName"
-              @select="renderEditor.selectedLayerID.value = $event"
-              @update="renderEditor.updateLayer"
+              @select="selectEditorLayer"
+              @update="updateEditorLayerTrack"
             />
             <PropertiesPanel
               :layer="renderEditor.selectedLayer.value"
               :assets="assets"
               :folders="folders"
-              @update="renderEditor.selectedLayer.value && renderEditor.updateLayer(renderEditor.selectedLayer.value.id, $event)"
+              @update="renderEditor.selectedLayer.value && updateEditorLayerTrack(renderEditor.selectedLayer.value.id, $event)"
             />
           </div>
 
@@ -746,8 +840,18 @@ onBeforeUnmount(() => {
             <VideoTimeline
               v-if="renderEditor.draft.value.timeline && processClip"
               :segments="renderEditor.draft.value.timeline.segments"
-              :duration="Math.max(0.1, processClip.duration)"
-              @update="renderEditor.updateConfig({ timeline: { segments: $event } })"
+              :layers="renderEditor.draft.value.layers"
+              :assets="assets"
+              :folders="folders"
+              :source-duration="Math.max(0.1, processClip.duration)"
+              :selected-layer-id="renderEditor.selectedLayerID.value"
+              :selected-segment-id="selectedTimelineSegmentID"
+              @update-segments="renderEditor.updateConfig({ timeline: { segments: $event } })"
+              @update-layers="renderEditor.updateConfig({ layers: $event })"
+              @update-layer="renderEditor.updateLayer($event.id, $event.patch)"
+              @select-layer="selectEditorLayer"
+              @select-segment="selectTimelineSegment"
+              @update-time="timelineTime = $event"
             />
           </div>
 

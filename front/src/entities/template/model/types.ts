@@ -20,6 +20,10 @@ export type Layer = {
   height: number
   visible: boolean
   opacity: number
+  trackId?: string
+  timelineSegmentId?: string
+  startTime?: number
+  endTime?: number
   source?: 'clip' | 'asset'
   fit?: 'cover' | 'contain' | 'stretch'
   assetId?: string
@@ -44,7 +48,14 @@ export type TemplateConfig = {
   timeline?: { segments: TimelineSegment[] }
 }
 
-export type TimelineSegment = { id: string; start: number; end: number }
+export type TimelineSegment = {
+  id: string
+  source?: 'clip' | 'asset'
+  assetId?: string
+  start: number
+  end: number
+  sourceDuration?: number
+}
 
 export type VideoTemplate = {
   id: string
@@ -130,6 +141,14 @@ export function normalizeConfig(config: TemplateConfig): TemplateConfig {
   return {
     ...config,
     canvas: { ...config.canvas },
+    timeline: config.timeline
+      ? {
+          segments: config.timeline.segments.map((segment) => ({
+            ...segment,
+            source: segment.source ?? 'clip',
+          })),
+        }
+      : undefined,
     layers: config.layers.flatMap((layer) => {
       if (layer.type === 'input_video') {
         const video: Layer = {

@@ -22,9 +22,12 @@ type Timeline struct {
 }
 
 type Segment struct {
-	ID    string  `json:"id"`
-	Start float64 `json:"start"`
-	End   float64 `json:"end"`
+	ID             string  `json:"id"`
+	Source         string  `json:"source,omitempty"`
+	AssetID        string  `json:"assetId,omitempty"`
+	Start          float64 `json:"start"`
+	End            float64 `json:"end"`
+	SourceDuration float64 `json:"sourceDuration,omitempty"`
 }
 
 type Canvas struct {
@@ -35,23 +38,27 @@ type Canvas struct {
 }
 
 type Layer struct {
-	ID         string  `json:"id"`
-	Name       string  `json:"name"`
-	Type       string  `json:"type"`
-	X          int     `json:"x"`
-	Y          int     `json:"y"`
-	Width      int     `json:"width"`
-	Height     int     `json:"height"`
-	Visible    bool    `json:"visible"`
-	Opacity    float64 `json:"opacity"`
-	Source     string  `json:"source,omitempty"`
-	Fit        string  `json:"fit,omitempty"`
-	AssetID    string  `json:"assetId,omitempty"`
-	Text       string  `json:"text,omitempty"`
-	TextSource string  `json:"textSource,omitempty"`
-	Color      string  `json:"color,omitempty"`
-	Filters    Filters `json:"filters,omitempty"`
-	Style      Style   `json:"style,omitempty"`
+	ID                string  `json:"id"`
+	Name              string  `json:"name"`
+	Type              string  `json:"type"`
+	X                 int     `json:"x"`
+	Y                 int     `json:"y"`
+	Width             int     `json:"width"`
+	Height            int     `json:"height"`
+	Visible           bool    `json:"visible"`
+	Opacity           float64 `json:"opacity"`
+	TrackID           string  `json:"trackId,omitempty"`
+	TimelineSegmentID string  `json:"timelineSegmentId,omitempty"`
+	StartTime         float64 `json:"startTime,omitempty"`
+	EndTime           float64 `json:"endTime,omitempty"`
+	Source            string  `json:"source,omitempty"`
+	Fit               string  `json:"fit,omitempty"`
+	AssetID           string  `json:"assetId,omitempty"`
+	Text              string  `json:"text,omitempty"`
+	TextSource        string  `json:"textSource,omitempty"`
+	Color             string  `json:"color,omitempty"`
+	Filters           Filters `json:"filters,omitempty"`
+	Style             Style   `json:"style,omitempty"`
 }
 
 type Filters struct {
@@ -124,6 +131,14 @@ func (c Config) AssetIDs() []string {
 			ids = append(ids, layer.AssetID)
 		}
 	}
+	if c.Timeline != nil {
+		for _, segment := range c.Timeline.Segments {
+			if segment.AssetID != "" && !seen[segment.AssetID] {
+				seen[segment.AssetID] = true
+				ids = append(ids, segment.AssetID)
+			}
+		}
+	}
 	return ids
 }
 
@@ -140,19 +155,31 @@ func (c Config) Validate() error {
 	if len(c.Layers) == 0 || len(c.Layers) > 50 {
 		return fmt.Errorf("template must contain from 1 to 50 layers")
 	}
+	segmentsByID := map[string]Segment{}
 	if c.Timeline != nil {
 		if len(c.Timeline.Segments) == 0 || len(c.Timeline.Segments) > 100 {
 			return fmt.Errorf("timeline must contain from 1 to 100 segments")
 		}
-		previousEnd := float64(-1)
+		segmentIDs := map[string]bool{}
 		for index, segment := range c.Timeline.Segments {
-			if strings.TrimSpace(segment.ID) == "" || segment.Start < 0 || segment.End <= segment.Start {
+			if strings.TrimSpace(segment.ID) == "" || segmentIDs[segment.ID] || segment.Start < 0 || segment.End <= segment.Start {
 				return fmt.Errorf("timeline segment %d is invalid", index+1)
 			}
-			if segment.Start < previousEnd {
-				return fmt.Errorf("timeline segments must be ordered and not overlap")
+			segmentIDs[segment.ID] = true
+			segmentsByID[segment.ID] = segment
+			source := segment.Source
+			if source == "" {
+				source = "clip"
 			}
-			previousEnd = segment.End
+			if source != "clip" && source != "asset" {
+				return fmt.Errorf("timeline segment %q has unsupported source %q", segment.ID, segment.Source)
+			}
+			if source == "asset" && strings.TrimSpace(segment.AssetID) == "" {
+				return fmt.Errorf("timeline segment %q requires assetId", segment.ID)
+			}
+			if segment.SourceDuration > 0 && segment.End > segment.SourceDuration+0.001 {
+				return fmt.Errorf("timeline segment %q exceeds source duration", segment.ID)
+			}
 		}
 	}
 	ids := map[string]bool{}
@@ -167,6 +194,9 @@ func (c Config) Validate() error {
 		if layer.Opacity < 0 || layer.Opacity > 1 {
 			return fmt.Errorf("layer %q opacity must be between 0 and 1", layer.ID)
 		}
+		if layer.StartTime < 0 || layer.EndTime < 0 || (layer.EndTime > 0 && layer.EndTime <= layer.StartTime) {
+			return fmt.Errorf("layer %q has an invalid timeline range", layer.ID)
+		}
 		if layer.Type != "audio" && (layer.Width < 1 || layer.Height < 1) {
 			return fmt.Errorf("visual layer %q must have a positive size", layer.ID)
 		}
@@ -177,6 +207,15 @@ func (c Config) Validate() error {
 		}
 		if layer.Type == "video" && layer.Source != "clip" && layer.Source != "asset" {
 			return fmt.Errorf("video layer %q has unsupported source %q", layer.ID, layer.Source)
+		}
+		if layer.TimelineSegmentID != "" {
+			segment, ok := segmentsByID[layer.TimelineSegmentID]
+			if !ok {
+				return fmt.Errorf("layer %q references an unknown timeline segment", layer.ID)
+			}
+			if layer.Type != "video" || layer.Source != "asset" || segment.Source != "asset" || layer.AssetID != segment.AssetID {
+				return fmt.Errorf("layer %q does not match its asset timeline segment", layer.ID)
+			}
 		}
 		if layer.Type == "text" && layer.TextSource != "streamer_name" && strings.TrimSpace(layer.Text) == "" {
 			return fmt.Errorf("text layer %q cannot be empty", layer.ID)

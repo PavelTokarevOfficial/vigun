@@ -21,13 +21,25 @@ func TestValidateAssetVideoRequiresAsset(t *testing.T) {
 	}
 }
 
-func TestValidateTimelineRejectsOverlappingSegments(t *testing.T) {
+func TestValidateTimelineAllowsReorderedSourceRanges(t *testing.T) {
 	config := Default(1080, 1920, 25)
 	config.Timeline = &Timeline{Segments: []Segment{
-		{ID: "first", Start: 0, End: 5},
-		{ID: "second", Start: 4, End: 8},
+		{ID: "first", Source: "clip", Start: 5, End: 8},
+		{ID: "second", Source: "clip", Start: 0, End: 4},
 	}}
-	if err := config.Validate(); err == nil {
-		t.Fatal("overlapping timeline segments should be rejected")
+	if err := config.Validate(); err != nil {
+		t.Fatalf("reordered source ranges should be valid: %v", err)
+	}
+}
+
+func TestValidateTimelineAssetAndCollectReference(t *testing.T) {
+	config := Default(1080, 1920, 25)
+	config.Timeline = &Timeline{Segments: []Segment{{ID: "ad", Source: "asset", AssetID: "asset-1", Start: 0, End: 5, SourceDuration: 5}}}
+	if err := config.Validate(); err != nil {
+		t.Fatalf("asset segment should be valid: %v", err)
+	}
+	ids := config.AssetIDs()
+	if len(ids) != 1 || ids[0] != "asset-1" {
+		t.Fatalf("timeline asset was not collected: %#v", ids)
 	}
 }

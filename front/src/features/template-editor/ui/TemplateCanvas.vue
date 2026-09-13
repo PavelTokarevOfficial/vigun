@@ -16,10 +16,17 @@ const props = withDefaults(
     selectedLayerId: string | null
     assets?: Asset[]
     sourceUrl?: string
+    timelineTime?: number
     thumbnailUrl?: string
     streamerName?: string
   }>(),
-  { assets: () => [], sourceUrl: '', thumbnailUrl: '', streamerName: '' },
+  {
+    assets: () => [],
+    sourceUrl: '',
+    timelineTime: 0,
+    thumbnailUrl: '',
+    streamerName: '',
+  },
 )
 const emit = defineEmits<{
   select: [id: string]
@@ -37,6 +44,23 @@ let animationFrame = 0
 const assetByID = computed(
   () => new Map(props.assets.map((asset) => [asset.id, asset])),
 )
+const timelinePosition = computed(() => {
+  let outputStart = 0
+  for (const segment of props.config.timeline?.segments ?? []) {
+    const duration = Math.max(0, segment.end - segment.start)
+    if (props.timelineTime <= outputStart + duration) {
+      return {
+        segment,
+        outputStart,
+        outputEnd: outputStart + duration,
+        sourceTime:
+          segment.start + Math.max(0, props.timelineTime - outputStart),
+      }
+    }
+    outputStart += duration
+  }
+  return null
+})
 
 function isVideo(layer: Layer) {
   return ['video', 'input_video', 'asset_video'].includes(layer.type)
@@ -49,6 +73,16 @@ function usesClip(layer: Layer) {
 }
 function sourceFor(layer: Layer) {
   if (usesClip(layer)) {
+    const active = timelinePosition.value?.segment
+    if (
+      active?.source === 'asset' &&
+      !props.config.layers.some((item) => item.timelineSegmentId === active.id)
+    ) {
+      const asset = active.assetId
+        ? assetByID.value.get(active.assetId)
+        : undefined
+      return { url: asset?.url ?? '', video: asset?.kind === 'video' }
+    }
     return {
       url: props.sourceUrl || props.thumbnailUrl,
       video: Boolean(props.sourceUrl),
@@ -56,6 +90,27 @@ function sourceFor(layer: Layer) {
   }
   const asset = layer.assetId ? assetByID.value.get(layer.assetId) : undefined
   return { url: asset?.url ?? '', video: asset?.kind === 'video' }
+}
+
+function activeLayer(layer: Layer) {
+  if (!layer.visible) return false
+  if (
+    props.timelineTime < (layer.startTime ?? 0) ||
+    (layer.endTime !== undefined && props.timelineTime > layer.endTime)
+  )
+    return false
+  const activeSegment = timelinePosition.value?.segment
+  if (layer.timelineSegmentId)
+    return activeSegment?.id === layer.timelineSegmentId
+  if (
+    usesClip(layer) &&
+    activeSegment?.source === 'asset' &&
+    props.config.layers.some(
+      (item) => item.timelineSegmentId === activeSegment.id,
+    )
+  )
+    return false
+  return true
 }
 function loadMedia() {
   const next: Record<string, HTMLImageElement | HTMLVideoElement> = {}
@@ -66,6 +121,7 @@ function loadMedia() {
     const previous = media.value[layer.id]
     if (previous?.getAttribute('data-source') === source.url) {
       next[layer.id] = previous
+      if (previous instanceof HTMLVideoElement) seekVideo(layer, previous)
       continue
     }
     if (!source.url) continue
@@ -79,6 +135,7 @@ function loadMedia() {
       element.preload = 'auto'
       element.addEventListener('loadeddata', () => {
         media.value = { ...media.value }
+        seekVideo(layer, element)
         void element.play().catch(() => undefined)
       })
       next[layer.id] = element
@@ -97,6 +154,22 @@ function loadMedia() {
     if (!next[id] && element instanceof HTMLVideoElement) element.pause()
   }
   media.value = next
+}
+
+function seekVideo(layer: Layer, element: HTMLVideoElement) {
+  if (!Number.isFinite(element.duration) || element.duration <= 0) return
+  const position = timelinePosition.value
+  let sourceTime = Math.max(0, props.timelineTime - (layer.startTime ?? 0))
+  if (
+    position &&
+    (usesClip(layer) || layer.timelineSegmentId === position.segment.id)
+  ) {
+    sourceTime = position.sourceTime
+  }
+  element.currentTime = Math.min(
+    Math.max(0, sourceTime),
+    Math.max(0, element.duration - 0.01),
+  )
 }
 
 function redraw() {
@@ -246,9 +319,19 @@ watch(
     props.assets,
     props.sourceUrl,
     props.thumbnailUrl,
+    props.timelineTime,
   ],
   loadMedia,
   { deep: true, immediate: true },
+)
+watch(
+  () => props.timelineTime,
+  () => {
+    for (const layer of props.config.layers) {
+      const element = media.value[layer.id]
+      if (element instanceof HTMLVideoElement) seekVideo(layer, element)
+    }
+  },
 )
 watch(() => [props.selectedLayerId, props.config.layers], updateTransformer, {
   deep: true,
@@ -285,7 +368,7 @@ onBeforeUnmount(() => {
           />
           <template v-for="layer in config.layers" :key="layer.id">
             <v-group
-              v-if="layer.visible && layer.type !== 'audio'"
+              v-if="activeLayer(layer) && layer.type !== 'audio'"
               :config="shape(layer)"
               @click="emit('select', layer.id)"
               @tap="emit('select', layer.id)"

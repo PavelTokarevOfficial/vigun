@@ -3,10 +3,12 @@ package ffmpeg
 import (
 	"context"
 	"fmt"
+	"os/exec"
+	"path/filepath"
+	"strings"
+
 	"github.com/finde-clip/finde-v2/back/internal/composition"
 	"github.com/finde-clip/finde-v2/back/internal/processing"
-	"os/exec"
-	"strings"
 )
 
 type Adapter struct{ Bin string }
@@ -36,7 +38,11 @@ func (a *Adapter) Render(ctx context.Context, in processing.RenderInput) error {
 	if err != nil {
 		return err
 	}
-	filter, videoLabel, audioLabel, err := buildFilter(config, in.SubtitlePath, assetInputs)
+	audioInputs, err := a.detectAudioInputs(ctx, in.SourcePath, in.AssetPaths, assetInputs)
+	if err != nil {
+		return err
+	}
+	filter, videoLabel, audioLabel, err := buildFilter(config, in.SubtitlePath, in.SubtitlePaths, assetInputs, audioInputs)
 	if err != nil {
 		return err
 	}
@@ -50,30 +56,84 @@ func (a *Adapter) Render(ctx context.Context, in processing.RenderInput) error {
 	return a.run(ctx, args...)
 }
 
+func (a *Adapter) detectAudioInputs(ctx context.Context, source string, paths map[string]string, assetInputs map[string]int) (map[int]bool, error) {
+	inputs := map[int]bool{}
+	hasAudio, err := a.hasAudioStream(ctx, source)
+	if err != nil {
+		return nil, err
+	}
+	inputs[0] = hasAudio
+	for id, index := range assetInputs {
+		hasAudio, err = a.hasAudioStream(ctx, paths[id])
+		if err != nil {
+			return nil, err
+		}
+		inputs[index] = hasAudio
+	}
+	return inputs, nil
+}
+
+func (a *Adapter) hasAudioStream(ctx context.Context, path string) (bool, error) {
+	probe := "ffprobe"
+	if dir := filepath.Dir(a.Bin); dir != "." {
+		probe = filepath.Join(dir, "ffprobe")
+	}
+	out, err := exec.CommandContext(ctx, probe, "-v", "error", "-select_streams", "a:0", "-show_entries", "stream=index", "-of", "csv=p=0", path).CombinedOutput()
+	if err != nil {
+		return false, fmt.Errorf("ffprobe audio stream: %w: %s", err, string(out))
+	}
+	return strings.TrimSpace(string(out)) != "", nil
+}
+
 func appendAssetInputs(args *[]string, config composition.Config, paths map[string]string) (map[string]int, error) {
 	indices := map[string]int{}
 	nextIndex := 1 // source Twitch clip is input 0
-	for _, layer := range config.Layers {
-		if !layer.Visible || layer.AssetID == "" || indices[layer.AssetID] != 0 {
-			continue
+	appendAsset := func(id string, loop bool) error {
+		if id == "" || indices[id] != 0 {
+			return nil
 		}
-		path := paths[layer.AssetID]
+		path := paths[id]
 		if path == "" {
-			return nil, fmt.Errorf("render asset %s is missing from job snapshot", layer.AssetID)
+			return fmt.Errorf("render asset %s is missing from job snapshot", id)
 		}
-		if layer.Type == "image" || layer.Type == "gif" {
+		if loop {
 			*args = append(*args, "-stream_loop", "-1")
 		}
 		*args = append(*args, "-i", path)
-		indices[layer.AssetID] = nextIndex
+		indices[id] = nextIndex
 		nextIndex++
+		return nil
+	}
+	for _, layer := range config.Layers {
+		if !layer.Visible || layer.AssetID == "" {
+			continue
+		}
+		if err := appendAsset(layer.AssetID, layer.Type == "image" || layer.Type == "gif"); err != nil {
+			return nil, err
+		}
+	}
+	if config.Timeline != nil {
+		for _, segment := range config.Timeline.Segments {
+			if segment.Source == "asset" {
+				if err := appendAsset(segment.AssetID, false); err != nil {
+					return nil, err
+				}
+			}
+		}
 	}
 	return indices, nil
 }
 
-func buildFilter(config composition.Config, subtitlePath string, assetInputs map[string]int) (string, string, string, error) {
-	filters := []string{fmt.Sprintf("color=c=%s:s=%dx%d:r=%d[base0]", safeColor(config.Canvas.Background, "#000000"), config.Canvas.Width, config.Canvas.Height, config.Canvas.FPS)}
-	timelineAudio := appendTimelineAudioFilters(&filters, config)
+func buildFilter(config composition.Config, subtitlePath string, subtitlePaths map[string]string, assetInputs map[string]int, audioInputs map[int]bool) (string, string, string, error) {
+	baseFilter := fmt.Sprintf("color=c=%s:s=%dx%d:r=%d", safeColor(config.Canvas.Background, "#000000"), config.Canvas.Width, config.Canvas.Height, config.Canvas.FPS)
+	if duration := timelineOutputDuration(config); duration > 0 {
+		baseFilter += fmt.Sprintf(":d=%g", duration)
+	}
+	filters := []string{baseFilter + "[base0]"}
+	timelineAudio, err := appendTimelineAudioFilters(&filters, config, assetInputs, audioInputs)
+	if err != nil {
+		return "", "", "", err
+	}
 	base := "base0"
 	step := 0
 	audioLabels := []string{}
@@ -86,14 +146,29 @@ func buildFilter(config composition.Config, subtitlePath string, assetInputs map
 			if !ok {
 				return "", "", "", fmt.Errorf("audio layer %s has no resolved asset", layer.ID)
 			}
+			if !audioInputs[index] {
+				return "", "", "", fmt.Errorf("audio layer %s asset has no audio stream", layer.ID)
+			}
 			label := fmt.Sprintf("audio%d", len(audioLabels))
-			filters = append(filters, fmt.Sprintf("[%d:a]volume=1[%s]", index, label))
+			filter := fmt.Sprintf("[%d:a]volume=1", index)
+			if layer.StartTime > 0 || layer.EndTime > 0 {
+				duration := layer.EndTime - layer.StartTime
+				if layer.EndTime == 0 {
+					duration = maxFloat(0.1, timelineOutputDuration(config)-layer.StartTime)
+				}
+				filter += fmt.Sprintf(",atrim=duration=%g,asetpts=PTS-STARTPTS+%g/TB", duration, layer.StartTime)
+			}
+			filters = append(filters, filter+"["+label+"]")
 			audioLabels = append(audioLabels, "["+label+"]")
 			continue
 		}
 		next := fmt.Sprintf("base%d", step+1)
 		switch layer.Type {
 		case "subtitles":
+			layerSubtitlePath := subtitlePath
+			if subtitlePaths[layer.ID] != "" {
+				layerSubtitlePath = subtitlePaths[layer.ID]
+			}
 			style := layer.Style
 			fontSize := positiveOr(style.FontSize, 8)
 			alignment := positiveOr(style.Alignment, 2)
@@ -105,10 +180,10 @@ func buildFilter(config composition.Config, subtitlePath string, assetInputs map
 			primary := safeASSColor(style.PrimaryColor, "&H00FFFFFF")
 			outlineColor := safeASSColor(style.OutlineColor, "&H00000000")
 			// This is the point where Whisper's local SRT is burned into the render.
-			filters = append(filters, fmt.Sprintf("[%s]subtitles=filename='%s':force_style='Alignment=%d,MarginV=%d,Fontsize=%d,PrimaryColour=%s,OutlineColour=%s,BorderStyle=1,Outline=%d'[%s]", base, escapeFilterPath(subtitlePath), alignment, marginV, fontSize, primary, outlineColor, outline, next))
+			filters = append(filters, fmt.Sprintf("[%s]subtitles=filename='%s':force_style='Alignment=%d,MarginV=%d,Fontsize=%d,PrimaryColour=%s,OutlineColour=%s,BorderStyle=1,Outline=%d'[%s]", base, escapeFilterPath(layerSubtitlePath), alignment, marginV, fontSize, primary, outlineColor, outline, next))
 		case "text":
 			fontSize := positiveOr(layer.Style.FontSize, max(18, layer.Height/5))
-			filters = append(filters, fmt.Sprintf("[%s]drawtext=text='%s':x=%d:y=%d:fontsize=%d:fontcolor=white:borderw=%d:bordercolor=black[%s]", base, escapeDrawText(layer.Text), layer.X, layer.Y, fontSize, nonNegativeOr(layer.Style.Outline, 2), next))
+			filters = append(filters, fmt.Sprintf("[%s]drawtext=text='%s':x=%d:y=%d:fontsize=%d:fontcolor=white:borderw=%d:bordercolor=black%s[%s]", base, escapeDrawText(layer.Text), layer.X, layer.Y, fontSize, nonNegativeOr(layer.Style.Outline, 2), filterEnable(layer), next))
 		case "color":
 			visual := fmt.Sprintf("layer%d", step)
 			filters = append(filters, fmt.Sprintf("color=c=%s:s=%dx%d:r=%d[%s]", safeColor(layer.Color, "#000000"), videoDimension(layer.Width), videoDimension(layer.Height), config.Canvas.FPS, visual))
@@ -135,18 +210,41 @@ func buildFilter(config composition.Config, subtitlePath string, assetInputs map
 		default:
 			input := "[0:v]"
 			usesClip := layer.Type == "input_video" || (layer.Type == "video" && layer.Source == "clip")
-			if usesClip {
-				input = appendTimelineVideoFilters(&filters, config, step)
-			} else {
-				index, ok := assetInputs[layer.AssetID]
-				if !ok {
-					return "", "", "", fmt.Errorf("layer %s has no resolved asset", layer.ID)
-				}
-				input = fmt.Sprintf("[%d:v]", index)
-			}
 			visual := fmt.Sprintf("layer%d", step)
-			filters = append(filters, input+scaleFilter(layer)+"["+visual+"]")
-			filters = append(filters, overlayFilter(base, visual, next, layer))
+			effectiveLayer := layer
+			if usesClip && config.Timeline != nil && len(config.Timeline.Segments) > 0 {
+				visual, err = appendTimelineVideoFilters(&filters, config, layer, step, assetInputs)
+				if err != nil {
+					return "", "", "", err
+				}
+			} else {
+				if !usesClip {
+					index, ok := assetInputs[layer.AssetID]
+					if !ok {
+						return "", "", "", fmt.Errorf("layer %s has no resolved asset", layer.ID)
+					}
+					input = fmt.Sprintf("[%d:v]", index)
+				}
+				filter := input
+				if !usesClip && layer.TimelineSegmentID != "" {
+					segment, outputStart, ok := timelineSegmentLayout(config, layer.TimelineSegmentID)
+					if !ok || (segment.Source != "asset" && segment.Source != "") {
+						return "", "", "", fmt.Errorf("layer %s has no linked asset timeline segment", layer.ID)
+					}
+					filter += fmt.Sprintf("trim=start=%g:end=%g,setpts=PTS-STARTPTS+%g/TB,%s", segment.Start, segment.End, outputStart, scaleFilter(layer))
+					if effectiveLayer.EndTime == 0 {
+						effectiveLayer.StartTime = outputStart
+						effectiveLayer.EndTime = outputStart + segment.End - segment.Start
+					}
+				} else {
+					filter += scaleFilter(layer)
+					if !usesClip && layer.StartTime > 0 {
+						filter += fmt.Sprintf(",setpts=PTS-STARTPTS+%g/TB", layer.StartTime)
+					}
+				}
+				filters = append(filters, filter+"["+visual+"]")
+			}
+			filters = append(filters, overlayFilter(base, visual, next, effectiveLayer))
 		}
 		base = next
 		step++
@@ -165,33 +263,99 @@ func buildFilter(config composition.Config, subtitlePath string, assetInputs map
 	return strings.Join(filters, ";"), "[" + base + "]", audio, nil
 }
 
-func appendTimelineVideoFilters(filters *[]string, config composition.Config, step int) string {
-	if config.Timeline == nil || len(config.Timeline.Segments) == 0 {
-		return "[0:v]"
-	}
+func appendTimelineVideoFilters(filters *[]string, config composition.Config, layer composition.Layer, step int, assetInputs map[string]int) (string, error) {
 	inputs := ""
 	for index, segment := range config.Timeline.Segments {
 		label := fmt.Sprintf("clipv%d_%d", step, index)
-		*filters = append(*filters, fmt.Sprintf("[0:v]trim=start=%g:end=%g,setpts=PTS-STARTPTS[%s]", segment.Start, segment.End, label))
+		if (segment.Source == "asset") && timelineSegmentHasVisualLayer(config, segment.ID) {
+			*filters = append(*filters, fmt.Sprintf("color=c=black@0:s=%dx%d:r=%d:d=%g,format=rgba[%s]", videoDimension(layer.Width), videoDimension(layer.Height), config.Canvas.FPS, segment.End-segment.Start, label))
+		} else {
+			input, err := timelineSegmentInput(segment, assetInputs, "v")
+			if err != nil {
+				return "", err
+			}
+			*filters = append(*filters, fmt.Sprintf("%strim=start=%g:end=%g,setpts=PTS-STARTPTS,%s,fps=%d,setsar=1,format=rgba[%s]", input, segment.Start, segment.End, scaleFilter(layer), config.Canvas.FPS, label))
+		}
 		inputs += "[" + label + "]"
 	}
 	output := fmt.Sprintf("clipv%d", step)
 	*filters = append(*filters, inputs+fmt.Sprintf("concat=n=%d:v=1:a=0[%s]", len(config.Timeline.Segments), output))
-	return "[" + output + "]"
+	return output, nil
 }
 
-func appendTimelineAudioFilters(filters *[]string, config composition.Config) string {
+func timelineSegmentHasVisualLayer(config composition.Config, segmentID string) bool {
+	for _, layer := range config.Layers {
+		if layer.TimelineSegmentID == segmentID {
+			return true
+		}
+	}
+	return false
+}
+
+func timelineSegmentLayout(config composition.Config, segmentID string) (composition.Segment, float64, bool) {
+	if config.Timeline == nil {
+		return composition.Segment{}, 0, false
+	}
+	outputStart := float64(0)
+	for _, segment := range config.Timeline.Segments {
+		if segment.ID == segmentID {
+			return segment, outputStart, true
+		}
+		outputStart += maxFloat(0, segment.End-segment.Start)
+	}
+	return composition.Segment{}, 0, false
+}
+
+func appendTimelineAudioFilters(filters *[]string, config composition.Config, assetInputs map[string]int, audioInputs map[int]bool) (string, error) {
 	if config.Timeline == nil || len(config.Timeline.Segments) == 0 {
-		return ""
+		return "", nil
 	}
 	inputs := ""
 	for index, segment := range config.Timeline.Segments {
+		inputIndex, err := timelineSegmentIndex(segment, assetInputs)
+		if err != nil {
+			return "", err
+		}
 		label := fmt.Sprintf("clipa%d", index)
-		*filters = append(*filters, fmt.Sprintf("[0:a]atrim=start=%g:end=%g,asetpts=PTS-STARTPTS[%s]", segment.Start, segment.End, label))
+		if audioInputs[inputIndex] {
+			*filters = append(*filters, fmt.Sprintf("[%d:a]atrim=start=%g:end=%g,asetpts=PTS-STARTPTS,aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo[%s]", inputIndex, segment.Start, segment.End, label))
+		} else {
+			*filters = append(*filters, fmt.Sprintf("anullsrc=r=48000:cl=stereo,atrim=duration=%g,asetpts=PTS-STARTPTS[%s]", segment.End-segment.Start, label))
+		}
 		inputs += "[" + label + "]"
 	}
 	*filters = append(*filters, inputs+fmt.Sprintf("concat=n=%d:v=0:a=1[clipaudio]", len(config.Timeline.Segments)))
-	return "[clipaudio]"
+	return "[clipaudio]", nil
+}
+
+func timelineSegmentIndex(segment composition.Segment, assetInputs map[string]int) (int, error) {
+	if segment.Source == "" || segment.Source == "clip" {
+		return 0, nil
+	}
+	index, ok := assetInputs[segment.AssetID]
+	if !ok {
+		return 0, fmt.Errorf("timeline segment %s has no resolved asset", segment.ID)
+	}
+	return index, nil
+}
+
+func timelineSegmentInput(segment composition.Segment, assetInputs map[string]int, stream string) (string, error) {
+	index, err := timelineSegmentIndex(segment, assetInputs)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("[%d:%s]", index, stream), nil
+}
+
+func timelineOutputDuration(config composition.Config) float64 {
+	if config.Timeline == nil {
+		return 0
+	}
+	duration := float64(0)
+	for _, segment := range config.Timeline.Segments {
+		duration += maxFloat(0, segment.End-segment.Start)
+	}
+	return duration
 }
 
 func scaleFilter(layer composition.Layer) string {
@@ -235,7 +399,24 @@ func videoDimension(value int) int {
 }
 
 func overlayFilter(base, visual, next string, layer composition.Layer) string {
-	return fmt.Sprintf("[%s][%s]overlay=%d:%d:shortest=1[%s]", base, visual, layer.X, layer.Y, next)
+	return fmt.Sprintf("[%s][%s]overlay=%d:%d:eof_action=pass:shortest=0%s[%s]", base, visual, layer.X, layer.Y, filterEnable(layer), next)
+}
+
+func filterEnable(layer composition.Layer) string {
+	if layer.EndTime > 0 {
+		return fmt.Sprintf(":enable='between(t,%g,%g)'", layer.StartTime, layer.EndTime)
+	}
+	if layer.StartTime > 0 {
+		return fmt.Sprintf(":enable='gte(t,%g)'", layer.StartTime)
+	}
+	return ""
+}
+
+func maxFloat(left, right float64) float64 {
+	if left > right {
+		return left
+	}
+	return right
 }
 
 func positiveOr(value, fallback int) int {

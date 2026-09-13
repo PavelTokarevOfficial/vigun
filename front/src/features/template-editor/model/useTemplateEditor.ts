@@ -84,9 +84,13 @@ export function useTemplateEditor(initial: TemplateConfig) {
   }
 
   function removeLayer(id: string) {
+    const source = draft.value.layers.find((layer) => layer.id === id)
+    const trackID = source ? (source.trackId ?? source.id) : id
     apply({
       ...draft.value,
-      layers: draft.value.layers.filter((layer) => layer.id !== id),
+      layers: draft.value.layers.filter(
+        (layer) => (layer.trackId ?? layer.id) !== trackID,
+      ),
     })
     selectedLayerID.value = draft.value.layers.at(-1)?.id ?? null
   }
@@ -94,25 +98,48 @@ export function useTemplateEditor(initial: TemplateConfig) {
   function duplicateLayer(id: string) {
     const source = draft.value.layers.find((layer) => layer.id === id)
     if (!source) return
-    const duplicate = {
-      ...copy(source),
-      id: `${source.type}-${crypto.randomUUID().slice(0, 8)}`,
-      name: `${source.name} — копия`,
-      x: source.x + 30,
-      y: source.y + 30,
-    }
-    apply({ ...draft.value, layers: [...draft.value.layers, duplicate] })
-    selectedLayerID.value = duplicate.id
+    const sourceTrackID = source.trackId ?? source.id
+    const duplicateTrackID = `${source.type}-${crypto.randomUUID().slice(0, 8)}`
+    const duplicates = draft.value.layers
+      .filter((layer) => (layer.trackId ?? layer.id) === sourceTrackID)
+      .map((layer, index) => ({
+        ...copy(layer),
+        id:
+          index === 0
+            ? duplicateTrackID
+            : `${source.type}-${crypto.randomUUID().slice(0, 8)}`,
+        trackId: duplicateTrackID,
+        name:
+          index === 0
+            ? `${source.name} — копия`
+            : `${source.name} — копия · часть ${index + 1}`,
+        x: layer.x + 30,
+        y: layer.y + 30,
+      }))
+    apply({ ...draft.value, layers: [...draft.value.layers, ...duplicates] })
+    selectedLayerID.value = duplicates[0]?.id ?? null
   }
 
   function moveLayer(id: string, direction: -1 | 1) {
-    const index = draft.value.layers.findIndex((layer) => layer.id === id)
+    const source = draft.value.layers.find((layer) => layer.id === id)
+    if (!source) return
+    const sourceTrackID = source.trackId ?? source.id
+    const order = [
+      ...new Set(draft.value.layers.map((layer) => layer.trackId ?? layer.id)),
+    ]
+    const index = order.indexOf(sourceTrackID)
     const nextIndex = index + direction
-    if (index < 0 || nextIndex < 0 || nextIndex >= draft.value.layers.length)
-      return
-    const layers = [...draft.value.layers]
-    ;[layers[index], layers[nextIndex]] = [layers[nextIndex], layers[index]]
-    apply({ ...draft.value, layers })
+    if (index < 0 || nextIndex < 0 || nextIndex >= order.length) return
+    ;[order[index], order[nextIndex]] = [order[nextIndex], order[index]]
+    const byTrack = new Map<string, Layer[]>()
+    for (const layer of draft.value.layers) {
+      const trackID = layer.trackId ?? layer.id
+      byTrack.set(trackID, [...(byTrack.get(trackID) ?? []), layer])
+    }
+    apply({
+      ...draft.value,
+      layers: order.flatMap((trackID) => byTrack.get(trackID) ?? []),
+    })
   }
 
   function undo() {

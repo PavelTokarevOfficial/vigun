@@ -45,18 +45,82 @@ func applyTimelineToSRT(path string, segments []composition.Segment) error {
 		for _, segment := range segments {
 			segmentStart := secondsDuration(segment.Start)
 			segmentEnd := secondsDuration(segment.End)
-			visibleStart := maxDuration(start, segmentStart)
-			visibleEnd := minDuration(end, segmentEnd)
-			if visibleEnd > visibleStart && text != "" {
-				shiftedStart := offset + visibleStart - segmentStart
-				shiftedEnd := offset + visibleEnd - segmentStart
-				output = append(output, fmt.Sprintf("%d\n%s --> %s\n%s", index, formatSRTTime(shiftedStart), formatSRTTime(shiftedEnd), text))
-				index++
+			if segment.Source == "" || segment.Source == "clip" {
+				visibleStart := maxDuration(start, segmentStart)
+				visibleEnd := minDuration(end, segmentEnd)
+				if visibleEnd > visibleStart && text != "" {
+					shiftedStart := offset + visibleStart - segmentStart
+					shiftedEnd := offset + visibleEnd - segmentStart
+					output = append(output, fmt.Sprintf("%d\n%s --> %s\n%s", index, formatSRTTime(shiftedStart), formatSRTTime(shiftedEnd), text))
+					index++
+				}
 			}
 			offset += segmentEnd - segmentStart
 		}
 	}
 	return os.WriteFile(path, []byte(strings.Join(output, "\n\n")+"\n"), 0o600)
+}
+
+func layerSubtitleFiles(source, dir string, layers []composition.Layer) (map[string]string, error) {
+	paths := map[string]string{}
+	for index, layer := range layers {
+		if !layer.Visible || layer.Type != "subtitles" || (layer.StartTime == 0 && layer.EndTime == 0) {
+			continue
+		}
+		path := fmt.Sprintf("%s/subtitles-layer-%d.srt", strings.TrimRight(dir, "/"), index)
+		if err := trimSRTToOutputRange(source, path, layer.StartTime, layer.EndTime); err != nil {
+			return nil, err
+		}
+		paths[layer.ID] = path
+	}
+	return paths, nil
+}
+
+func trimSRTToOutputRange(source, destination string, rangeStart, rangeEnd float64) error {
+	raw, err := os.ReadFile(source)
+	if err != nil {
+		return err
+	}
+	startLimit := secondsDuration(rangeStart)
+	endLimit := time.Duration(1<<63 - 1)
+	if rangeEnd > 0 {
+		endLimit = secondsDuration(rangeEnd)
+	}
+	blocks := strings.Split(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\n\n")
+	output := make([]string, 0, len(blocks))
+	index := 1
+	for _, block := range blocks {
+		match := srtTiming.FindStringSubmatch(block)
+		if len(match) != 3 {
+			continue
+		}
+		start, parseErr := parseSRTTime(match[1])
+		if parseErr != nil {
+			return parseErr
+		}
+		end, parseErr := parseSRTTime(match[2])
+		if parseErr != nil {
+			return parseErr
+		}
+		visibleStart := maxDuration(start, startLimit)
+		visibleEnd := minDuration(end, endLimit)
+		if visibleEnd <= visibleStart {
+			continue
+		}
+		text := strings.TrimSpace(srtTiming.ReplaceAllString(block, ""))
+		lines := strings.Split(text, "\n")
+		if len(lines) > 0 {
+			if _, numberErr := strconv.Atoi(strings.TrimSpace(lines[0])); numberErr == nil {
+				text = strings.TrimSpace(strings.Join(lines[1:], "\n"))
+			}
+		}
+		if text == "" {
+			continue
+		}
+		output = append(output, fmt.Sprintf("%d\n%s --> %s\n%s", index, formatSRTTime(visibleStart), formatSRTTime(visibleEnd), text))
+		index++
+	}
+	return os.WriteFile(destination, []byte(strings.Join(output, "\n\n")+"\n"), 0o600)
 }
 
 func parseSRTTime(value string) (time.Duration, error) {
