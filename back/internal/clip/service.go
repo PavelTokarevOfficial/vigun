@@ -21,6 +21,7 @@ type Local struct {
 	StreamerID    string  `json:"streamerId"`
 	StreamerName  string  `json:"streamerName"`
 	Title         string  `json:"title"`
+	TwitchClipID  string  `json:"twitchClipId"`
 	ThumbnailURL  string  `json:"thumbnailUrl"`
 	Duration      float64 `json:"duration"`
 	HasSource     bool    `json:"hasSource"`
@@ -33,7 +34,7 @@ type Local struct {
 }
 
 func (s *Service) List(ctx context.Context) ([]Local, error) {
-	rows, e := s.db.Query(ctx, `SELECT c.id,c.streamer_id,s.display_name,c.title,COALESCE(c.thumbnail_url,''),COALESCE(c.duration,0),
+	rows, e := s.db.Query(ctx, `SELECT c.id,c.streamer_id,s.display_name,c.title,c.twitch_clip_id,COALESCE(c.thumbnail_url,''),COALESCE(c.duration,0),
 		EXISTS(SELECT 1 FROM media_files m WHERE m.clip_id=c.id AND m.type='source'),c.status,COALESCE(c.error,''),
 		COALESCE(j.current_step,''),COALESCE(j.progress,0),COALESCE(j.type::text,''),COALESCE(j.status::text,'')
 		FROM clips c JOIN streamers s ON s.id=c.streamer_id
@@ -46,7 +47,7 @@ func (s *Service) List(ctx context.Context) ([]Local, error) {
 	out := []Local{}
 	for rows.Next() {
 		var x Local
-		if e = rows.Scan(&x.ID, &x.StreamerID, &x.StreamerName, &x.Title, &x.ThumbnailURL, &x.Duration, &x.HasSource, &x.Status, &x.Error, &x.CurrentStep, &x.Progress, &x.LastJobType, &x.LastJobStatus); e != nil {
+		if e = rows.Scan(&x.ID, &x.StreamerID, &x.StreamerName, &x.Title, &x.TwitchClipID, &x.ThumbnailURL, &x.Duration, &x.HasSource, &x.Status, &x.Error, &x.CurrentStep, &x.Progress, &x.LastJobType, &x.LastJobStatus); e != nil {
 			return nil, e
 		}
 		out = append(out, x)

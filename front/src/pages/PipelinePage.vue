@@ -1,20 +1,17 @@
 <script setup lang="ts">
 import {
   ArrowLeft,
-  Redo2,
-  Undo2,
-  X,
   Download,
   ExternalLink,
   Play,
-  Trash,
-  RotateCcw,
   Plus,
+  Redo2,
+  RotateCcw,
+  Trash,
+  Undo2,
+  X,
 } from '@lucide/vue'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import AppButton from '../shared/ui/AppButton.vue'
-import ErrorState from '../shared/ui/ErrorState.vue'
-import { readData, readError } from '../shared/api/http'
 import type {
   Asset,
   AssetFolder,
@@ -31,11 +28,15 @@ import LayerPanel from '../features/template-editor/ui/LayerPanel.vue'
 import PropertiesPanel from '../features/template-editor/ui/PropertiesPanel.vue'
 import TemplateCanvas from '../features/template-editor/ui/TemplateCanvas.vue'
 import VideoTimeline from '../features/template-editor/ui/VideoTimeline.vue'
+import { readData, readError } from '../shared/api/http'
+import AppButton from '../shared/ui/AppButton.vue'
+import ErrorState from '../shared/ui/ErrorState.vue'
 
 type Clip = {
   id: string
   title: string
   streamerName: string
+  twitchClipId: string
   thumbnailUrl: string
   duration: number
   hasSource: boolean
@@ -59,6 +60,15 @@ type Video = {
   createdAt: string
 }
 
+type VideoPreview = {
+  key: string
+  title: string
+  streamer: string
+  templateName?: string
+  url: string
+  mode: 'video' | 'twitch'
+}
+
 type Column = 'downloaded' | 'ready'
 
 const clips = ref<Clip[]>([])
@@ -77,7 +87,7 @@ const folders = ref<AssetFolder[]>([])
 const sourceURL = ref('')
 const timelineTime = ref(0)
 const selectedTimelineSegmentID = ref<string | null>(null)
-const previewVideo = ref<Video | null>(null)
+const previewVideo = ref<VideoPreview | null>(null)
 const renderEditor = useTemplateEditor(createDefaultConfig())
 
 const favorites = computed(() =>
@@ -371,6 +381,66 @@ async function removeRenderedVideo(video: Video) {
   await load()
 }
 
+function twitchEmbedURL(clip: Clip) {
+  const query = new URLSearchParams({
+    clip: clip.twitchClipId,
+    parent: window.location.hostname || 'localhost',
+    autoplay: 'true',
+    muted: 'false',
+  })
+  return `https://clips.twitch.tv/embed?${query}`
+}
+
+async function openClipPreview(clip: Clip) {
+  error.value = ''
+  if (!clip.hasSource) {
+    previewVideo.value = {
+      key: `twitch-${clip.id}`,
+      title: clip.title,
+      streamer: clip.streamerName,
+      url: twitchEmbedURL(clip),
+      mode: 'twitch',
+    }
+    return
+  }
+
+  busy.value = clip.id
+  try {
+    const response = await fetch(`/api/clips/${clip.id}/source`)
+    if (!response.ok) {
+      throw new Error(
+        await readError(response, 'Не удалось открыть скачанное видео'),
+      )
+    }
+    const source = await readData<{ url: string }>(response)
+    previewVideo.value = {
+      key: `source-${clip.id}`,
+      title: clip.title,
+      streamer: clip.streamerName,
+      url: source.url,
+      mode: 'video',
+    }
+  } catch (cause) {
+    error.value =
+      cause instanceof Error
+        ? cause.message
+        : 'Не удалось открыть скачанное видео'
+  } finally {
+    busy.value = ''
+  }
+}
+
+function openRenderedVideo(video: Video) {
+  previewVideo.value = {
+    key: `render-${video.id}`,
+    title: video.title,
+    streamer: video.streamer,
+    templateName: video.templateName,
+    url: video.url,
+    mode: 'video',
+  }
+}
+
 function canDelete(clip: Clip) {
   return (
     ['saved', 'downloaded', 'failed', 'completed'].includes(clip.status) &&
@@ -465,6 +535,15 @@ onBeforeUnmount(() => {
 
             <div class="flex gap-2 absolute bottom-0 right-0 p-3">
               <AppButton
+                class="grid h-8 w-8 place-content-center"
+                :disabled="busy === clip.id"
+                title="Посмотреть клип"
+                :aria-label="`Посмотреть клип «${clip.title}»`"
+                @click="openClipPreview(clip)"
+              >
+                <Play :size="16" />
+              </AppButton>
+              <AppButton
                 v-if="clip.status === 'saved'"
                 :disabled="busy === clip.id"
                 class="grid place-content-center w-8 h-8"
@@ -532,6 +611,15 @@ onBeforeUnmount(() => {
             </div>
 
             <div class="absolute right-0 bottom-0 flex gap-2 p-3">
+              <AppButton
+                class="grid h-8 w-8 place-content-center"
+                :disabled="busy === clip.id"
+                title="Посмотреть скачанное видео"
+                :aria-label="`Посмотреть скачанное видео «${clip.title}»`"
+                @click="openClipPreview(clip)"
+              >
+                <Play :size="16" />
+              </AppButton>
               <AppButton
                 v-if="['downloaded', 'completed'].includes(clip.status) && !isProcessQueued(clip)"
                 :disabled="busy === clip.id"
@@ -619,7 +707,7 @@ onBeforeUnmount(() => {
                 class="grid h-8 w-8 place-content-center"
                 title="Открыть готовое видео"
                 :aria-label="`Открыть готовое видео «${video.title}»`"
-                @click="previewVideo = video"
+                @click="openRenderedVideo(video)"
               >
                 <Play :size="16" />
               </AppButton>
@@ -682,10 +770,21 @@ onBeforeUnmount(() => {
         </header>
         <div class="flex justify-center bg-slate-950 p-4">
           <video
+            v-if="previewVideo.mode === 'video'"
+            :key="previewVideo.key"
             :src="previewVideo.url"
             controls
             autoplay
             class="max-h-[75vh] max-w-full"
+          />
+          <iframe
+            v-else
+            :key="previewVideo.key"
+            :src="previewVideo.url"
+            :title="`Twitch-клип: ${previewVideo.title}`"
+            class="aspect-video max-h-[75vh] w-full border-0"
+            allow="autoplay; fullscreen"
+            allowfullscreen
           />
         </div>
       </section>
