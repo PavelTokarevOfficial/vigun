@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { Check, ExternalLink } from '@lucide/vue'
-import { Navigation } from 'swiper/modules'
+import { Navigation, Pagination, Mousewheel} from 'swiper/modules'
 import { Swiper, SwiperSlide } from 'swiper/vue'
 import 'swiper/css'
+import 'swiper/css/pagination';
 import 'swiper/css/navigation'
 import type { SubscriptionFeed, TwitchClip } from '@/entities/clip/model/types'
 import ClipImportButton from '@/features/clip-import/ClipImportButton.vue'
@@ -16,7 +17,7 @@ const emit = defineEmits<{
   save: [clip: TwitchClip]
 }>()
 
-const modules = [Navigation]
+const modules = [Navigation, Pagination, Mousewheel]
 </script>
 
 <template>
@@ -24,8 +25,11 @@ const modules = [Navigation]
     <Swiper
       :modules="modules"
       :navigation="true"
+      :pagination="{ type: 'progressbar'} "
       :space-between="14"
+      :mousewheel="true"
       :slides-per-view="1.12"
+      :slides-per-group="2"
       :breakpoints="{
         520: { slidesPerView: 2.1 },
         850: { slidesPerView: 3.1 },
@@ -100,19 +104,29 @@ const modules = [Navigation]
 </template>
 
 <style scoped>
+.subscription-swiper .swiper{
+  padding-bottom: 10px;
+}
 .subscription-swiper :deep(.swiper-button-prev),
 .subscription-swiper :deep(.swiper-button-next) {
   width: 2.5rem;
   height: 2.5rem;
   border-radius: 9999px;
   background: rgb(255 255 255 / 0.94);
-  color: #6d28d9;
+  color: var(--color-violet-600);
   box-shadow: 0 4px 14px rgb(15 23 42 / 0.18);
 }
-.subscription-swiper :deep(.swiper-button-prev::after),
-.subscription-swiper :deep(.swiper-button-next::after) {
-  font-size: 1rem;
-  font-weight: 800;
+.subscription-swiper :deep(.swiper-button-prev svg),
+.subscription-swiper :deep(.swiper-button-next svg) {
+  width: 1rem;
+  height: 1rem;
+}
+.subscription-swiper :deep(.swiper-pagination) {
+  top: auto;
+  bottom:0;
+}
+.subscription-swiper :deep(.swiper-pagination .swiper-pagination-progressbar-fill) {
+  background-color: var(--color-violet-600);
 }
 @media (max-width: 639px) {
   .subscription-swiper :deep(.swiper-button-prev),

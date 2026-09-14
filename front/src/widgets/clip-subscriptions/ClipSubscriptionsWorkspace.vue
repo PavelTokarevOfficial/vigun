@@ -43,18 +43,10 @@ onBeforeUnmount(() => {
 
 <template>
   <div>
-    <div class="mb-6">
-      <h1 class="text-2xl font-semibold sm:text-3xl">Свежие клипы</h1>
-      <p class="mt-1 text-sm text-slate-600 sm:text-base">
-        Клипы подписанных стримеров за последние 7 дней.
-      </p>
-    </div>
-
     <ErrorState v-if="error" :message="error" />
     <p v-if="notice" class="mb-4 text-sm text-emerald-700">{{ notice }}</p>
-    <p v-if="loading" class="py-8 text-center text-slate-500">
-      Загружаем подписки…
-    </p>
+    <p v-if="loading" class="py-8 text-center text-slate-500">Загружаем подписки…</p>
+    
     <EmptyState v-else-if="feeds.length === 0" message="Подписок пока нет.">
       <RouterLink
         to="/streamers"
@@ -68,7 +60,7 @@ onBeforeUnmount(() => {
       v-for="feed in feeds"
       v-else
       :key="feed.streamerId"
-      class="mb-8 overflow-hidden rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5"
+      class="mb-8 overflow-hidden rounded-2xl border border-slate-200 bg-white p-4 pb-2 shadow-sm"
     >
       <div
         class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
