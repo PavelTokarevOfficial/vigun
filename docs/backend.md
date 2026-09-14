@@ -20,4 +20,6 @@ Worker получает `SIGINT`/`SIGTERM` через context. Если конт
 
 Worker пишет JSON structured logs для начала, каждого шага (`download`, `extracting_audio`, `transcribing`, `rendering`), завершения, ошибки и длительности job. В полях лога есть `job_id`, `clip_id`, `step` и `progress`.
 
+Пустой результат Whisper сохраняется как допустимый SRT-артефакт, но не передаётся в FFmpeg/libass: render продолжается без слоя субтитров. Если после обрезки временного диапазона конкретного subtitle-слоя в нём не осталось реплик, пропускается только этот слой без fallback на полный SRT. Благодаря этому retry использует уже созданные source/audio/transcription artifacts и не падает на `Unable to open subtitles.srt`.
+
 `POST /api/clips/{id}/process` принимает JSON `{ "templateId": "UUID", "config": { ... } }`. `config` — отредактированная для одного запуска копия шаблона; для совместимости её можно не передавать. API валидирует config, подставляет runtime-значение названия Twitch-канала и сохраняет snapshot вместе с job. Worker скачивает только S3 keys из snapshot во временную папку, строит filter graph из декларативных слоёв и таймлайна и передаёт его в FFmpeg adapter. В HTTP response никогда не попадают credentials или внутренний S3 endpoint.

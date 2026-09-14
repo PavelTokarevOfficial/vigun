@@ -86,17 +86,30 @@ func (r *Runner) Process(ctx context.Context, in Input) (Result, error) {
 		if e != nil {
 			return out, e
 		}
-		if config.Timeline != nil {
+		hasSubtitles, e := srtHasCues(sub)
+		if e != nil {
+			return out, fmt.Errorf("inspect subtitles: %w", e)
+		}
+		if hasSubtitles && config.Timeline != nil {
 			if e = applyTimelineToSRT(sub, config.Timeline.Segments); e != nil {
 				return out, fmt.Errorf("retime subtitles: %w", e)
 			}
+			hasSubtitles, e = srtHasCues(sub)
+			if e != nil {
+				return out, fmt.Errorf("inspect retimed subtitles: %w", e)
+			}
 		}
-		subtitlePaths, e := layerSubtitleFiles(sub, d, config.Layers)
-		if e != nil {
-			return out, fmt.Errorf("prepare subtitle tracks: %w", e)
+		subtitlePaths := map[string]string{}
+		subtitlePath := ""
+		if hasSubtitles {
+			subtitlePath = sub
+			subtitlePaths, e = layerSubtitleFiles(sub, d, config.Layers)
+			if e != nil {
+				return out, fmt.Errorf("prepare subtitle tracks: %w", e)
+			}
 		}
 		render := filepath.Join(d, "final.mp4")
-		if e = r.Media.Render(ctx, RenderInput{SourcePath: src, SubtitlePath: sub, SubtitlePaths: subtitlePaths, OutputPath: render, Width: in.Width, Height: in.Height, Blur: in.Blur, Preset: in.Preset, Composition: config, AssetPaths: assets}); e != nil {
+		if e = r.Media.Render(ctx, RenderInput{SourcePath: src, SubtitlePath: subtitlePath, SubtitlePaths: subtitlePaths, OutputPath: render, Width: in.Width, Height: in.Height, Blur: in.Blur, Preset: in.Preset, Composition: config, AssetPaths: assets}); e != nil {
 			return out, fmt.Errorf("render: %w", e)
 		}
 		if e = r.putFile(ctx, out.RenderKey, render, "video/mp4"); e != nil {

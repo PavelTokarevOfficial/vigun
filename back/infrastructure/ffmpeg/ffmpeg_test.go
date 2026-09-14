@@ -75,6 +75,17 @@ func TestRenderCreatesVerticalVideoWithBurnedSubtitles(t *testing.T) {
 	}
 }
 
+func TestBuildFilterSkipsSubtitleLayerWithoutUsableSRT(t *testing.T) {
+	config := composition.Default(1080, 1920, 10)
+	filter, _, _, err := buildFilter(config, "", map[string]string{}, map[string]int{}, map[int]bool{0: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(filter, "subtitles=") {
+		t.Fatalf("empty subtitle input must not create a libass filter: %s", filter)
+	}
+}
+
 func TestRenderInsertsSilentAssetBetweenSourceFragments(t *testing.T) {
 	bin, err := exec.LookPath("ffmpeg")
 	if err != nil {

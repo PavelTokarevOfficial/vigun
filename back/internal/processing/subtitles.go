@@ -13,6 +13,14 @@ import (
 
 var srtTiming = regexp.MustCompile(`(?m)^(\d{2}:\d{2}:\d{2},\d{3}) --> (\d{2}:\d{2}:\d{2},\d{3})\s*$`)
 
+func srtHasCues(path string) (bool, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return false, err
+	}
+	return srtTiming.Match(raw), nil
+}
+
 func applyTimelineToSRT(path string, segments []composition.Segment) error {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -71,7 +79,16 @@ func layerSubtitleFiles(source, dir string, layers []composition.Layer) (map[str
 		if err := trimSRTToOutputRange(source, path, layer.StartTime, layer.EndTime); err != nil {
 			return nil, err
 		}
-		paths[layer.ID] = path
+		hasCues, err := srtHasCues(path)
+		if err != nil {
+			return nil, err
+		}
+		if hasCues {
+			paths[layer.ID] = path
+		} else {
+			// Keep the key so FFmpeg does not fall back to the untrimmed SRT.
+			paths[layer.ID] = ""
+		}
 	}
 	return paths, nil
 }

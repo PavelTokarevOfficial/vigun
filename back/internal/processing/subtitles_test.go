@@ -82,3 +82,19 @@ func TestLayerSubtitleFilesClipsCuesToLayerRange(t *testing.T) {
 		}
 	}
 }
+
+func TestLayerSubtitleFilesMarksEmptyRangeWithoutFallingBack(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "subtitles.srt")
+	if err := os.WriteFile(source, []byte("1\n00:00:00,000 --> 00:00:01,000\nFirst\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	paths, err := layerSubtitleFiles(source, dir, []composition.Layer{{ID: "late-captions", Type: "subtitles", Visible: true, StartTime: 5, EndTime: 6}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path, exists := paths["late-captions"]
+	if !exists || path != "" {
+		t.Fatalf("expected an explicit empty subtitle track, got exists=%v path=%q", exists, path)
+	}
+}

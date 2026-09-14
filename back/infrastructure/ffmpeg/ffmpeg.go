@@ -141,6 +141,12 @@ func buildFilter(config composition.Config, subtitlePath string, subtitlePaths m
 		if !layer.Visible {
 			continue
 		}
+		if layer.Type == "subtitles" {
+			layerPath, hasLayerPath := subtitlePaths[layer.ID]
+			if (hasLayerPath && layerPath == "") || (!hasLayerPath && subtitlePath == "") {
+				continue
+			}
+		}
 		if layer.Type == "audio" {
 			index, ok := assetInputs[layer.AssetID]
 			if !ok {
@@ -166,8 +172,8 @@ func buildFilter(config composition.Config, subtitlePath string, subtitlePaths m
 		switch layer.Type {
 		case "subtitles":
 			layerSubtitlePath := subtitlePath
-			if subtitlePaths[layer.ID] != "" {
-				layerSubtitlePath = subtitlePaths[layer.ID]
+			if path, ok := subtitlePaths[layer.ID]; ok {
+				layerSubtitlePath = path
 			}
 			style := layer.Style
 			fontSize := positiveOr(style.FontSize, 8)

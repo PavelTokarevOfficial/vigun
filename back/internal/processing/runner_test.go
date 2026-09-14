@@ -47,7 +47,10 @@ func (d *fakeDownloader) Download(_ context.Context, _ string) (io.ReadCloser, s
 	return io.NopCloser(bytes.NewReader([]byte("source"))), "video/mp4", nil
 }
 
-type fakeMedia struct{ audioCalls, renderCalls int }
+type fakeMedia struct {
+	audioCalls, renderCalls int
+	lastRenderInput         RenderInput
+}
 
 func (m *fakeMedia) ExtractAudio(_ context.Context, _, out string) error {
 	m.audioCalls++
@@ -55,13 +58,20 @@ func (m *fakeMedia) ExtractAudio(_ context.Context, _, out string) error {
 }
 func (m *fakeMedia) Render(_ context.Context, in RenderInput) error {
 	m.renderCalls++
+	m.lastRenderInput = in
 	return os.WriteFile(in.OutputPath, []byte("render"), 0o600)
 }
 
-type fakeTranscriber struct{ calls int }
+type fakeTranscriber struct {
+	calls int
+	empty bool
+}
 
 func (t *fakeTranscriber) Transcribe(_ context.Context, _, outputBase string) error {
 	t.calls++
+	if t.empty {
+		return os.WriteFile(outputBase+".srt", nil, 0o600)
+	}
 	return os.WriteFile(outputBase+".srt", []byte("1\n00:00:00,000 --> 00:00:01,000\ntext\n"), 0o600)
 }
 
@@ -92,4 +102,24 @@ func TestProcessSkipsExistingArtifactsOnRetry(t *testing.T) {
 		t.Fatalf("retry repeated completed work: download=%d audio=%d transcribe=%d render=%d", downloader.calls, processor.audioCalls, transcriber.calls, processor.renderCalls)
 	}
 
+}
+
+func TestProcessRendersWithoutSubtitlesWhenTranscriptionIsEmpty(t *testing.T) {
+	store, downloader, processor := newMemoryStorage(), &fakeDownloader{}, &fakeMedia{}
+	transcriber := &fakeTranscriber{empty: true}
+	runner := Runner{Storage: store, Downloader: downloader, Media: processor, Transcriber: transcriber}
+
+	result, err := runner.Process(context.Background(), Input{ClipID: "silent-clip", ClipURL: "https://example.test/clip", Width: 1080, Height: 1920, Blur: 25, Preset: "veryfast"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if processor.renderCalls != 1 {
+		t.Fatalf("expected a render without subtitles, got %d render calls", processor.renderCalls)
+	}
+	if processor.lastRenderInput.SubtitlePath != "" {
+		t.Fatalf("expected an empty subtitle path, got %q", processor.lastRenderInput.SubtitlePath)
+	}
+	if _, ok := store.objects[result.RenderKey]; !ok {
+		t.Fatalf("render %q was not stored", result.RenderKey)
+	}
 }
