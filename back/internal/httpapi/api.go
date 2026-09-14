@@ -9,6 +9,7 @@ import (
 	"github.com/finde-clip/finde-v2/back/internal/media"
 	"github.com/finde-clip/finde-v2/back/internal/processing"
 	"github.com/finde-clip/finde-v2/back/internal/streamer"
+	"github.com/finde-clip/finde-v2/back/internal/subscription"
 	"github.com/finde-clip/finde-v2/back/internal/videotemplate"
 	"github.com/go-chi/chi/v5"
 	"io"
@@ -22,6 +23,7 @@ import (
 type API struct {
 	streamers *streamer.Service
 	clips     *clip.Service
+	subs      *subscription.Service
 	assets    *assets.Service
 	templates *videotemplate.Service
 	library   *media.Library
@@ -30,8 +32,8 @@ type API struct {
 	log       *slog.Logger
 }
 
-func New(s *streamer.Service, c *clip.Service, assets *assets.Service, templates *videotemplate.Service, library *media.Library, v *media.Videos, j *processing.Jobs, l *slog.Logger) *API {
-	return &API{streamers: s, clips: c, assets: assets, templates: templates, library: library, videos: v, jobs: j, log: l}
+func New(s *streamer.Service, c *clip.Service, subs *subscription.Service, assets *assets.Service, templates *videotemplate.Service, library *media.Library, v *media.Videos, j *processing.Jobs, l *slog.Logger) *API {
+	return &API{streamers: s, clips: c, subs: subs, assets: assets, templates: templates, library: library, videos: v, jobs: j, log: l}
 }
 func (a *API) Router() http.Handler {
 	r := chi.NewRouter()
@@ -42,9 +44,13 @@ func (a *API) Router() http.Handler {
 		r.Post("/bulk", a.createMany)
 		r.Put("/{id}", a.update)
 		r.Patch("/{id}/priority", a.adjustPriority)
+		r.Patch("/{id}/subscription", a.adjustSubscription)
 		r.Delete("/{id}", a.delete)
 	})
 	r.Get("/api/streamers/{id}/clips", a.remoteClips)
+	r.Get("/api/subscriptions", a.listSubscriptions)
+	r.Post("/api/subscriptions/{id}/sync", a.syncSubscription)
+	r.Patch("/api/subscriptions/clips/{id}/viewed", a.markSubscriptionClipViewed)
 	r.Route("/api/assets", func(r chi.Router) {
 		r.Get("/", a.listAssets)
 		r.Post("/", a.uploadAsset)
@@ -280,6 +286,9 @@ type streamerBulkInput struct {
 type streamerPriorityInput struct {
 	Priority int `json:"priority"`
 }
+type streamerSubscriptionInput struct {
+	Subscribed bool `json:"subscribed"`
+}
 
 func (a *API) create(w http.ResponseWriter, r *http.Request) {
 	var in streamerInput
@@ -332,6 +341,42 @@ func (a *API) adjustPriority(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	write(w, 200, map[string]any{"data": x})
+}
+func (a *API) adjustSubscription(w http.ResponseWriter, r *http.Request) {
+	var in streamerSubscriptionInput
+	if json.NewDecoder(r.Body).Decode(&in) != nil {
+		fail(w, 400, errText("invalid JSON"))
+		return
+	}
+	x, e := a.streamers.SetSubscribed(r.Context(), chi.URLParam(r, "id"), in.Subscribed)
+	if e != nil {
+		fail(w, 422, e)
+		return
+	}
+	write(w, 200, map[string]any{"data": x})
+}
+func (a *API) listSubscriptions(w http.ResponseWriter, r *http.Request) {
+	x, e := a.subs.List(r.Context())
+	if e != nil {
+		fail(w, 500, e)
+		return
+	}
+	write(w, 200, map[string]any{"data": x})
+}
+func (a *API) syncSubscription(w http.ResponseWriter, r *http.Request) {
+	count, e := a.subs.Sync(r.Context(), chi.URLParam(r, "id"))
+	if e != nil {
+		fail(w, 422, e)
+		return
+	}
+	write(w, 200, map[string]any{"data": map[string]int{"clips": count}})
+}
+func (a *API) markSubscriptionClipViewed(w http.ResponseWriter, r *http.Request) {
+	if e := a.subs.MarkViewed(r.Context(), chi.URLParam(r, "id")); e != nil {
+		fail(w, 404, e)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 func (a *API) delete(w http.ResponseWriter, r *http.Request) {
 	if e := a.streamers.Delete(r.Context(), chi.URLParam(r, "id")); e != nil {

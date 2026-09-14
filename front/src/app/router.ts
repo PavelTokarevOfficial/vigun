@@ -4,19 +4,29 @@ import StreamersPage from '../pages/StreamersPage.vue'
 export default createRouter({
   history: createWebHistory(),
   routes: [
-    { path: '/', redirect: '/streamers' },
+    { path: '/', redirect: '/pipeline' },
     { path: '/streamers', component: StreamersPage },
-    { path: '/search', component: () => import('../pages/ClipsPage.vue') },
-    { path: '/clips', redirect: '/search' },
+    {
+      path: '/search',
+      component: () => import('../pages/ClipDiscoveryPage.vue'),
+      children: [
+        { path: '', redirect: { name: 'clip-subscriptions' } },
+        {
+          path: 'subscriptions',
+          name: 'clip-subscriptions',
+          component: () => import('../pages/ClipSubscriptionsPage.vue'),
+        },
+        {
+          path: 'clips',
+          name: 'clip-search',
+          component: () => import('../pages/ClipsPage.vue'),
+        },
+      ],
+    },
+    { path: '/clips', redirect: '/search/clips' },
     { path: '/pipeline', component: () => import('../pages/PipelinePage.vue') },
     { path: '/assets', component: () => import('../pages/AssetsPage.vue') },
-    {
-      path: '/templates',
-      component: () => import('../pages/TemplatesPage.vue'),
-    },
-    {
-      path: '/templates/:id',
-      component: () => import('../pages/TemplateEditorPage.vue'),
-    },
+    { path: '/templates', component: () => import('../pages/TemplatesPage.vue') },
+    { path: '/templates/:id', component: () => import('../pages/TemplateEditorPage.vue') },
   ],
 })

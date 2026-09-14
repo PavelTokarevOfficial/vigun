@@ -126,6 +126,22 @@ export function useStreamerManager() {
       )
     })
   }
+  async function setSubscribed(streamer: Streamer, subscribed: boolean) {
+    const previous = streamer.subscribed
+    streamer.subscribed = subscribed
+    const saved = await run(async () => {
+      await request(
+        fetch(`/api/streamers/${streamer.id}/subscription`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ subscribed }),
+        }),
+        'Не удалось изменить подписку',
+      )
+    })
+    if (!saved) streamer.subscribed = previous
+    return saved
+  }
 
   return {
     rows,
@@ -145,6 +161,7 @@ export function useStreamerManager() {
     saveEdit,
     remove,
     setPriority,
+    setSubscribed,
   }
 }
 

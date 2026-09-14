@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"github.com/finde-clip/finde-v2/back/infrastructure/postgres"
 	"github.com/finde-clip/finde-v2/back/infrastructure/storage"
 	"github.com/finde-clip/finde-v2/back/infrastructure/twitch"
 	"github.com/finde-clip/finde-v2/back/internal/assets"
@@ -12,6 +13,7 @@ import (
 	"github.com/finde-clip/finde-v2/back/internal/platform/db"
 	"github.com/finde-clip/finde-v2/back/internal/processing"
 	"github.com/finde-clip/finde-v2/back/internal/streamer"
+	"github.com/finde-clip/finde-v2/back/internal/subscription"
 	"github.com/finde-clip/finde-v2/back/internal/videotemplate"
 	"log/slog"
 	"net/http"
@@ -50,7 +52,9 @@ func main() {
 	}
 	assetService := assets.New(pool, store)
 	templateService := videotemplate.New(pool, store)
-	srv := &http.Server{Addr: cfg.HTTPAddr, Handler: httpapi.New(streamer.New(pool), clip.New(pool, twitch.New(cfg.TwitchClientID, cfg.TwitchClientSecret), templateService), assetService, templateService, media.NewLibrary(pool, store), media.NewVideos(pool, store), processing.NewJobs(pool), log).Router(), ReadHeaderTimeout: 5 * time.Second}
+	twitchClient := twitch.New(cfg.TwitchClientID, cfg.TwitchClientSecret)
+	subscriptionService := subscription.New(postgres.NewSubscriptionRepository(pool), twitch.NewSubscriptionSource(twitchClient))
+	srv := &http.Server{Addr: cfg.HTTPAddr, Handler: httpapi.New(streamer.New(pool), clip.New(pool, twitchClient, templateService), subscriptionService, assetService, templateService, media.NewLibrary(pool, store), media.NewVideos(pool, store), processing.NewJobs(pool), log).Router(), ReadHeaderTimeout: 5 * time.Second}
 	go func() {
 		log.Info("api started", "addr", cfg.HTTPAddr)
 		if e := srv.ListenAndServe(); e != nil && e != http.ErrServerClosed {

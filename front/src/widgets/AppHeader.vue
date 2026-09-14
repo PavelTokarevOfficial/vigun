@@ -11,7 +11,7 @@ import {
 } from '@/shared/ui/shadcn/dropdown-menu'
 
 const primaryNavigation = [
-  { url: '/search', label: 'Поиск клипов' },
+  { url: '/search/subscriptions', label: 'Клипы' },
   { url: '/pipeline', label: 'Pipeline' },
 ]
 const menuNavigation = [
@@ -29,7 +29,10 @@ const menuNavigation = [
 <template>
   <header class="mb-8 flex items-center justify-between gap-4">
     <div class="flex items-center gap-6">
-      <RouterLink to="/search" class="text-2xl font-bold text-slate-950">
+      <RouterLink
+        to="/search/subscriptions"
+        class="text-2xl font-bold text-slate-950"
+      >
         <Logo class="max-w-[100px] h-auto" />
       </RouterLink>
 

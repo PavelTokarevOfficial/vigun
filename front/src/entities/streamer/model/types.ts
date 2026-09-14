@@ -3,4 +3,5 @@ export type Streamer = {
   twitchLogin: string
   displayName: string
   priority: number
+  subscribed: boolean
 }
