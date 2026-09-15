@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { Check, ChevronDown, ChevronUp, ExternalLink } from '@lucide/vue'
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import type { SubscriptionFeed, TwitchClip } from '@/entities/clip/model/types'
 import ClipImportButton from '@/features/clip-import/ClipImportButton.vue'
 
 const props = defineProps<{
   feed: SubscriptionFeed
   busyClipId: string
+  hideViewed: boolean
 }>()
 const emit = defineEmits<{
   open: [index: number]
@@ -14,9 +15,14 @@ const emit = defineEmits<{
 }>()
 
 const expanded = ref(false)
+const clips = computed(() =>
+  props.hideViewed
+    ? props.feed.clips.filter((clip) => !clip.viewed)
+    : props.feed.clips,
+)
 
 function toggleVisibilityClass() {
-  const count = props.feed.clips.length
+  const count = clips.value.length
   if (count <= 1) return 'subscription-toggle--hidden'
   if (count === 2) return 'subscription-toggle--hide-from-sm'
   if (count === 3) return 'subscription-toggle--hide-from-lg'
@@ -24,16 +30,27 @@ function toggleVisibilityClass() {
   if (count === 5) return 'subscription-toggle--hide-from-2xl'
   return ''
 }
+
+function originalIndex(clip: TwitchClip) {
+  return props.feed.clips.findIndex((item) => item.id === clip.id)
+}
 </script>
 
 <template>
   <div>
+    <p
+      v-if="clips.length === 0"
+      class="rounded-xl border border-dashed border-slate-300 p-5 text-sm text-slate-500"
+    >
+      Все свежие клипы просмотрены.
+    </p>
     <div
+      v-else
       class="subscription-clip-grid grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5"
       :class="{ 'subscription-clip-grid--collapsed': !expanded }"
     >
       <article
-        v-for="(clip, index) in feed.clips"
+        v-for="clip in clips"
         :key="clip.id"
         class="flex h-full min-w-0 flex-col justify-between overflow-hidden rounded-xl border border-slate-200 bg-slate-50 transition hover:border-violet-300 hover:shadow-md"
       >
@@ -41,7 +58,7 @@ function toggleVisibilityClass() {
           type="button"
           class="block text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-violet-600"
           :aria-label="`Смотреть клип: ${clip.title}`"
-          @click="emit('open', index)"
+          @click="emit('open', originalIndex(clip))"
         >
           <div class="relative aspect-video overflow-hidden bg-slate-200">
             <img
@@ -97,6 +114,7 @@ function toggleVisibilityClass() {
       type="button"
       class="mx-auto mt-3 flex min-h-10 items-center justify-center gap-2 rounded-xl px-4 text-sm font-semibold text-violet-700 transition hover:bg-violet-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-600"
       :class="toggleVisibilityClass()"
+      v-if="clips.length"
       :aria-expanded="expanded"
       @click="expanded = !expanded"
     >

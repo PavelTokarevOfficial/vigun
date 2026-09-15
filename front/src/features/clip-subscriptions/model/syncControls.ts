@@ -4,6 +4,7 @@ export type SubscriptionSyncControls = {
   syncing: Ref<boolean>
   progress: Ref<string>
   canSync: Ref<boolean>
+  hideViewed: Ref<boolean>
   requestSync: () => void
   registerSync: (handler: () => void) => () => void
 }
@@ -12,12 +13,14 @@ export function createSubscriptionSyncControls(): SubscriptionSyncControls {
   const syncing = ref(false)
   const progress = ref('')
   const canSync = ref(false)
+  const hideViewed = ref(false)
   const handler = shallowRef<(() => void) | null>(null)
 
   return {
     syncing,
     progress,
     canSync,
+    hideViewed,
     requestSync: () => handler.value?.(),
     registerSync: (nextHandler) => {
       handler.value = nextHandler

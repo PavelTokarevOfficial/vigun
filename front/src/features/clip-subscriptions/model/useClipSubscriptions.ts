@@ -66,12 +66,22 @@ export function useClipSubscriptions(controls: SubscriptionSyncControls) {
   }
 
   function openPreview(feed: SubscriptionFeed, index?: number) {
-    const firstUnseen = feed.clips.findIndex((clip) => !clip.viewed)
+    const selectedClipId = index === undefined ? '' : feed.clips[index]?.id
+    const previewClips = controls.hideViewed.value
+      ? feed.clips.filter((clip) => !clip.viewed)
+      : feed.clips
+    if (!previewClips.length) return
+
+    const selectedIndex = selectedClipId
+      ? previewClips.findIndex((clip) => clip.id === selectedClipId)
+      : -1
+    const firstUnseen = previewClips.findIndex((clip) => !clip.viewed)
     previewInitialIndex.value = Math.max(
       0,
-      index ?? (firstUnseen >= 0 ? firstUnseen : 0),
+      selectedIndex >= 0 ? selectedIndex : firstUnseen,
     )
-    previewFeed.value = feed
+    previewFeed.value =
+      previewClips === feed.clips ? feed : { ...feed, clips: previewClips }
   }
 
   function closePreview() {

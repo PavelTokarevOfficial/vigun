@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { RefreshCw } from '@lucide/vue'
+import { Eye, EyeOff, RefreshCw } from '@lucide/vue'
 import { computed, provide } from 'vue'
 import { useRoute } from 'vue-router'
 import {
@@ -10,7 +10,13 @@ import {
 const route = useRoute()
 const onSubscriptions = computed(() => route.name === 'clip-subscriptions')
 const syncControls = createSubscriptionSyncControls()
-const { canSync, progress: syncProgress, requestSync, syncing } = syncControls
+const {
+  canSync,
+  hideViewed,
+  progress: syncProgress,
+  requestSync,
+  syncing,
+} = syncControls
 
 provide(subscriptionSyncControlsKey, syncControls)
 </script>
@@ -39,19 +45,38 @@ provide(subscriptionSyncControlsKey, syncControls)
           Поиск
         </RouterLink>
       </nav>
-      <button
-        v-if="onSubscriptions"
-        type="button"
-        class="mb-3 inline-flex min-h-10 shrink-0 items-center justify-center gap-2 rounded-xl bg-violet-600 px-3 text-xs font-semibold text-white transition hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50 sm:px-4 sm:text-sm"
-        :disabled="syncing || !canSync"
-        @click="requestSync"
-      >
-        <RefreshCw class="size-4" :class="syncing ? 'animate-spin' : ''" />
-        <span class="sm:hidden">{{ syncing ? syncProgress : 'Обновить' }}</span>
-        <span class="hidden sm:inline">
-          {{ syncing ? `Синхронизация ${syncProgress}` : 'Синхронизировать' }}
-        </span>
-      </button>
+      <div v-if="onSubscriptions" class="mb-3 flex shrink-0 items-center gap-2">
+        <button
+          type="button"
+          class="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 rounded-xl border px-3 text-xs font-semibold transition sm:px-4 sm:text-sm"
+          :class="hideViewed
+            ? 'border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100'
+            : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'"
+          :aria-pressed="hideViewed"
+          :title="hideViewed ? 'Показать просмотренные' : 'Скрыть просмотренные'"
+          @click="hideViewed = !hideViewed"
+        >
+          <Eye v-if="hideViewed" class="size-4" />
+          <EyeOff v-else class="size-4" />
+          <span class="hidden md:inline">
+            {{ hideViewed ? 'Показать просмотренные' : 'Скрыть просмотренные' }}
+          </span>
+        </button>
+        <button
+          type="button"
+          class="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 rounded-xl bg-violet-600 px-3 text-xs font-semibold text-white transition hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50 sm:px-4 sm:text-sm"
+          :disabled="syncing || !canSync"
+          @click="requestSync"
+        >
+          <RefreshCw class="size-4" :class="syncing ? 'animate-spin' : ''" />
+          <span class="sm:hidden">{{
+            syncing ? syncProgress : 'Обновить'
+          }}</span>
+          <span class="hidden sm:inline">
+            {{ syncing ? `Синхронизация ${syncProgress}` : 'Синхронизировать' }}
+          </span>
+        </button>
+      </div>
     </div>
     <RouterView />
   </section>

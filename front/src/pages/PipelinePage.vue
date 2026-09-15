@@ -365,12 +365,6 @@ async function remove(clip: Clip) {
 }
 
 async function removeRenderedVideo(video: Video) {
-  if (
-    !window.confirm(
-      `Удалить готовое видео «${video.title}»? Исходник останется в «Скачанных».`,
-    )
-  )
-    return
   busy.value = video.id
   error.value = ''
   const response = await fetch(`/api/videos/${video.id}`, { method: 'DELETE' })

@@ -24,6 +24,7 @@ const {
   previewOpen,
 } = model
 const unregisterSync = syncControls.registerSync(() => void model.sync())
+const { hideViewed } = syncControls
 
 function formatSynced(value: string | null) {
   return value
@@ -32,6 +33,12 @@ function formatSynced(value: string | null) {
         timeStyle: 'short',
       })
     : 'ещё не запускалась'
+}
+
+function hasVisibleClips(feed: (typeof feeds.value)[number]) {
+  return hideViewed.value
+    ? feed.clips.some((clip) => !clip.viewed)
+    : feed.clips.length > 0
 }
 
 onMounted(() => void model.load())
@@ -77,7 +84,7 @@ onBeforeUnmount(() => {
         <button
           type="button"
           class="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"
-          :disabled="feed.clips.length === 0"
+          :disabled="!hasVisibleClips(feed)"
           @click="model.openPreview(feed)"
         >
           <Play class="size-4" />Смотреть клипы
@@ -88,6 +95,7 @@ onBeforeUnmount(() => {
         v-if="feed.clips.length"
         :feed="feed"
         :busy-clip-id="busyClipId"
+        :hide-viewed="hideViewed"
         @open="model.openPreview(feed, $event)"
         @save="model.save(feed, $event)"
       />
