@@ -7,7 +7,7 @@ import { subscriptionSyncControlsKey } from '@/features/clip-subscriptions/model
 import { useClipSubscriptions } from '@/features/clip-subscriptions/model/useClipSubscriptions'
 import EmptyState from '@/shared/ui/EmptyState.vue'
 import ErrorState from '@/shared/ui/ErrorState.vue'
-import SubscriptionClipCarousel from './SubscriptionClipCarousel.vue'
+import SubscriptionClipGrid from './SubscriptionClipGrid.vue'
 
 const syncControls = inject(subscriptionSyncControlsKey)
 if (!syncControls) throw new Error('Subscription sync controls are unavailable')
@@ -45,8 +45,10 @@ onBeforeUnmount(() => {
   <div>
     <ErrorState v-if="error" :message="error" />
     <p v-if="notice" class="mb-4 text-sm text-emerald-700">{{ notice }}</p>
-    <p v-if="loading" class="py-8 text-center text-slate-500">Загружаем подписки…</p>
-    
+    <p v-if="loading" class="py-8 text-center text-slate-500">
+      Загружаем подписки…
+    </p>
+
     <EmptyState v-else-if="feeds.length === 0" message="Подписок пока нет.">
       <RouterLink
         to="/streamers"
@@ -82,7 +84,7 @@ onBeforeUnmount(() => {
         </button>
       </div>
 
-      <SubscriptionClipCarousel
+      <SubscriptionClipGrid
         v-if="feed.clips.length"
         :feed="feed"
         :busy-clip-id="busyClipId"
