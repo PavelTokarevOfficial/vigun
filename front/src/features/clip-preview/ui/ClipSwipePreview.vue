@@ -113,7 +113,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', keydown))
         aria-label="Закрыть предпросмотр"
         @click="emit('close')"
       />
-      <section class="relative z-10 w-full max-w-3xl">
+      <section class="relative z-10 w-full max-w-5xl">
         <div class="mb-3 flex items-center justify-between text-white">
           <div>
             <p class="text-sm text-white/65">{{ streamerName }}</p>
