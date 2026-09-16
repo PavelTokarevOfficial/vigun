@@ -7,6 +7,7 @@ import {
   Plus,
   Redo2,
   RotateCcw,
+  Send,
   Trash,
   Undo2,
   X,
@@ -69,7 +70,30 @@ type VideoPreview = {
   mode: 'video' | 'twitch'
 }
 
+type InstagramContainer = {
+  id: string
+  status: string
+  error?: string
+}
+
+type InstagramForm = {
+  tunnelUrl: string
+  caption: string
+  shareToFeed: boolean
+  collaborators: string
+  coverUrl: string
+  audioName: string
+  locationId: string
+  thumbOffset: string
+}
+
 type Column = 'downloaded' | 'ready'
+
+const defaultInstagramCaption = `Лучшие моменты со стримов в коротком формате 🎬
+
+Подписывайся, чтобы не пропустить новые клипы!
+
+#стрим #стример #твич #twitch #twitchclips #клипы #нарезка #моменты #приколы #reels`
 
 const clips = ref<Clip[]>([])
 const videos = ref<Video[]>([])
@@ -88,6 +112,19 @@ const sourceURL = ref('')
 const timelineTime = ref(0)
 const selectedTimelineSegmentID = ref<string | null>(null)
 const previewVideo = ref<VideoPreview | null>(null)
+const instagramVideo = ref<Video | null>(null)
+const instagramBusy = ref(false)
+const instagramMessage = ref('')
+const instagramForm = ref<InstagramForm>({
+  tunnelUrl: '',
+  caption: '',
+  shareToFeed: true,
+  collaborators: '',
+  coverUrl: '',
+  audioName: '',
+  locationId: '',
+  thumbOffset: '',
+})
 const renderEditor = useTemplateEditor(createDefaultConfig())
 
 const favorites = computed(() =>
@@ -435,6 +472,91 @@ function openRenderedVideo(video: Video) {
   }
 }
 
+function openInstagramDialog(video: Video) {
+  instagramVideo.value = video
+  instagramMessage.value = ''
+  instagramForm.value = {
+    tunnelUrl: '',
+    caption: defaultInstagramCaption,
+    shareToFeed: true,
+    collaborators: '',
+    coverUrl: '',
+    audioName: '',
+    locationId: '',
+    thumbOffset: '',
+  }
+}
+
+function closeInstagramDialog() {
+  if (instagramBusy.value) return
+  instagramVideo.value = null
+  instagramMessage.value = ''
+}
+
+function publicVideoURL(video: Video) {
+  return `${instagramForm.value.tunnelUrl.trim().replace(/\/$/, '')}/api/videos/${video.id}/content`
+}
+
+function wait(milliseconds: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds))
+}
+
+async function publishToInstagram() {
+  const video = instagramVideo.value
+  if (!video) return
+  instagramBusy.value = true
+  instagramMessage.value = 'Instagram скачивает и обрабатывает видео…'
+  error.value = ''
+  try {
+    const thumbOffset = instagramForm.value.thumbOffset.trim()
+    const response = await fetch(`/api/videos/${video.id}/instagram`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        videoUrl: publicVideoURL(video),
+        caption: instagramForm.value.caption,
+        shareToFeed: instagramForm.value.shareToFeed,
+        collaborators: instagramForm.value.collaborators
+          .split(',')
+          .map((value) => value.trim())
+          .filter(Boolean),
+        coverUrl: instagramForm.value.coverUrl.trim(),
+        audioName: instagramForm.value.audioName.trim(),
+        locationId: instagramForm.value.locationId.trim(),
+        thumbOffset: thumbOffset ? Number(thumbOffset) : null,
+      }),
+    })
+    const container = await readData<InstagramContainer>(response)
+    let status = container
+    for (let attempt = 0; attempt < 60 && status.status === 'IN_PROGRESS'; attempt += 1) {
+      await wait(5000)
+      status = await readData<InstagramContainer>(
+        await fetch(`/api/videos/${video.id}/instagram/${container.id}`),
+      )
+    }
+    if (status.status !== 'FINISHED') {
+      throw new Error(
+        status.error ||
+          (status.status === 'IN_PROGRESS'
+            ? 'Instagram не обработал видео за 5 минут'
+            : `Instagram вернул статус ${status.status}`),
+      )
+    }
+    await readData<{ id: string }>(
+      await fetch(`/api/videos/${video.id}/instagram/${container.id}/publish`, {
+        method: 'POST',
+      }),
+    )
+    instagramMessage.value = 'Видео опубликовано в Instagram.'
+  } catch (cause) {
+    instagramMessage.value = ''
+    error.value =
+      cause instanceof Error ? cause.message : 'Не удалось опубликовать видео'
+  } finally {
+    instagramBusy.value = false
+  }
+}
+
 function canDelete(clip: Clip) {
   return (
     ['saved', 'downloaded', 'failed', 'completed'].includes(clip.status) &&
@@ -705,6 +827,15 @@ onBeforeUnmount(() => {
               >
                 <Play :size="16" />
               </AppButton>
+              <AppButton
+                variant="secondary"
+                class="grid h-8 w-8 place-content-center"
+                title="Опубликовать в Instagram"
+                :aria-label="`Опубликовать «${video.title}» в Instagram`"
+                @click="openInstagramDialog(video)"
+              >
+                <Send :size="16" />
+              </AppButton>
               <a
                 :href="`/api/videos/${video.id}/download`"
                 class="app-button app-button--primary grid h-8 w-8 place-content-center"
@@ -781,6 +912,127 @@ onBeforeUnmount(() => {
             allowfullscreen
           />
         </div>
+      </section>
+    </div>
+
+    <div
+      v-if="instagramVideo"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="instagram-dialog-title"
+    >
+      <section class="max-h-[92vh] w-full max-w-3xl overflow-auto rounded-2xl bg-white shadow-2xl">
+        <header class="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4">
+          <div>
+            <h2 id="instagram-dialog-title" class="text-lg font-semibold">
+              Публикация Reels
+            </h2>
+            <p class="mt-1 text-sm text-slate-600">{{ instagramVideo.title }}</p>
+          </div>
+          <button
+            type="button"
+            class="rounded-lg p-2 text-slate-600 hover:bg-slate-100 disabled:opacity-50"
+            :disabled="instagramBusy"
+            aria-label="Закрыть публикацию в Instagram"
+            @click="closeInstagramDialog"
+          >
+            <X class="size-5" />
+          </button>
+        </header>
+
+        <form class="space-y-4 p-5" @submit.prevent="publishToInstagram">
+          <label class="block text-sm font-medium">
+            HTTPS URL Cloudflare Tunnel
+            <input
+              v-model="instagramForm.tunnelUrl"
+              type="url"
+              required
+              placeholder="https://example.trycloudflare.com"
+              class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 font-normal"
+            >
+          </label>
+          <p class="break-all rounded-lg bg-slate-100 p-3 text-xs text-slate-600">
+            Instagram получит:
+            <a :href='publicVideoURL(instagramVideo)' target="_blank" rel="noopener noreferrer">
+              {{ publicVideoURL(instagramVideo) }}
+            </a>
+          </p>
+          <label class="block text-sm font-medium">
+            Подпись
+            <textarea
+              v-model="instagramForm.caption"
+              rows="4"
+              class="mt-1 w-full h-50 rounded-lg border border-slate-300 px-3 py-2 font-normal"
+            />
+          </label>
+          <label class="flex items-center gap-2 text-sm font-medium">
+            <input v-model="instagramForm.shareToFeed" type="checkbox">
+            Также показать в ленте
+          </label>
+
+          <details class="rounded-lg border border-slate-200 p-4">
+            <summary class="cursor-pointer text-sm font-semibold">Дополнительные настройки</summary>
+            <div class="mt-4 grid gap-4 sm:grid-cols-2">
+              <label class="block text-sm font-medium">
+                Соавторы через запятую
+                <input
+                  v-model="instagramForm.collaborators"
+                  placeholder="username, another_user"
+                  class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 font-normal"
+                >
+              </label>
+              <label class="block text-sm font-medium">
+                Название аудио
+                <input
+                  v-model="instagramForm.audioName"
+                  class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 font-normal"
+                >
+              </label>
+              <label class="block text-sm font-medium sm:col-span-2">
+                HTTPS URL обложки
+                <input
+                  v-model="instagramForm.coverUrl"
+                  type="url"
+                  placeholder="https://…/cover.jpg"
+                  class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 font-normal"
+                >
+              </label>
+              <label class="block text-sm font-medium">
+                Кадр обложки, мс
+                <input
+                  v-model="instagramForm.thumbOffset"
+                  type="number"
+                  min="0"
+                  placeholder="0"
+                  class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 font-normal"
+                >
+              </label>
+              <label class="block text-sm font-medium">
+                Instagram location ID
+                <input
+                  v-model="instagramForm.locationId"
+                  class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 font-normal"
+                >
+              </label>
+            </div>
+            <p class="mt-3 text-xs text-slate-500">
+              Если задан URL обложки, Instagram игнорирует смещение кадра.
+            </p>
+          </details>
+
+          <p v-if="instagramMessage" class="text-sm text-emerald-700">
+            {{ instagramMessage }}
+          </p>
+          <footer class="flex justify-end gap-2 border-t border-slate-200 pt-4">
+            <AppButton variant="secondary" :disabled="instagramBusy" @click="closeInstagramDialog">
+              Закрыть
+            </AppButton>
+            <AppButton type="submit" :disabled="instagramBusy">
+              {{ instagramBusy ? 'Публикуем…' : 'Опубликовать' }}
+            </AppButton>
+          </footer>
+        </form>
       </section>
     </div>
 

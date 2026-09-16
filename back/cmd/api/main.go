@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	instagramclient "github.com/finde-clip/finde-v2/back/infrastructure/instagram"
 	"github.com/finde-clip/finde-v2/back/infrastructure/postgres"
 	"github.com/finde-clip/finde-v2/back/infrastructure/storage"
 	"github.com/finde-clip/finde-v2/back/infrastructure/twitch"
@@ -9,6 +10,7 @@ import (
 	"github.com/finde-clip/finde-v2/back/internal/clip"
 	"github.com/finde-clip/finde-v2/back/internal/config"
 	"github.com/finde-clip/finde-v2/back/internal/httpapi"
+	"github.com/finde-clip/finde-v2/back/internal/instagram"
 	"github.com/finde-clip/finde-v2/back/internal/media"
 	"github.com/finde-clip/finde-v2/back/internal/platform/db"
 	"github.com/finde-clip/finde-v2/back/internal/processing"
@@ -54,7 +56,11 @@ func main() {
 	templateService := videotemplate.New(pool, store)
 	twitchClient := twitch.New(cfg.TwitchClientID, cfg.TwitchClientSecret)
 	subscriptionService := subscription.New(postgres.NewSubscriptionRepository(pool), twitch.NewSubscriptionSource(twitchClient))
-	srv := &http.Server{Addr: cfg.HTTPAddr, Handler: httpapi.New(streamer.New(pool), clip.New(pool, twitchClient, templateService), subscriptionService, assetService, templateService, media.NewLibrary(pool, store), media.NewVideos(pool, store), processing.NewJobs(pool), log).Router(), ReadHeaderTimeout: 5 * time.Second}
+	var instagramService *instagram.Service
+	if cfg.ValidateInstagram() == nil {
+		instagramService = instagram.New(instagramclient.New(cfg.InstagramAPIVersion, cfg.InstagramUserID, cfg.InstagramAccessToken))
+	}
+	srv := &http.Server{Addr: cfg.HTTPAddr, Handler: httpapi.New(streamer.New(pool), clip.New(pool, twitchClient, templateService), subscriptionService, assetService, templateService, media.NewLibrary(pool, store), media.NewVideos(pool, store), processing.NewJobs(pool), instagramService, log).Router(), ReadHeaderTimeout: 5 * time.Second}
 	go func() {
 		log.Info("api started", "addr", cfg.HTTPAddr)
 		if e := srv.ListenAndServe(); e != nil && e != http.ErrServerClosed {

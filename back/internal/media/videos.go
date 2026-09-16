@@ -77,6 +77,12 @@ func (v *Videos) Download(ctx context.Context, id string) (Object, string, error
 	return object, renderFilename(title), nil
 }
 
+func (v *Videos) Exists(ctx context.Context, id string) (bool, error) {
+	var exists bool
+	err := v.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM media_files WHERE id=$1 AND type='render')`, id).Scan(&exists)
+	return exists, err
+}
+
 func renderFilename(title string) string {
 	title = strings.TrimSpace(strings.Map(func(char rune) rune {
 		if char < 32 || char == '/' || char == '\\' {

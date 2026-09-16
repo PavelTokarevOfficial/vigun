@@ -6,6 +6,7 @@ import (
 	"github.com/finde-clip/finde-v2/back/internal/assets"
 	"github.com/finde-clip/finde-v2/back/internal/clip"
 	"github.com/finde-clip/finde-v2/back/internal/composition"
+	"github.com/finde-clip/finde-v2/back/internal/instagram"
 	"github.com/finde-clip/finde-v2/back/internal/media"
 	"github.com/finde-clip/finde-v2/back/internal/processing"
 	"github.com/finde-clip/finde-v2/back/internal/streamer"
@@ -29,11 +30,12 @@ type API struct {
 	library   *media.Library
 	videos    *media.Videos
 	jobs      *processing.Jobs
+	instagram *instagram.Service
 	log       *slog.Logger
 }
 
-func New(s *streamer.Service, c *clip.Service, subs *subscription.Service, assets *assets.Service, templates *videotemplate.Service, library *media.Library, v *media.Videos, j *processing.Jobs, l *slog.Logger) *API {
-	return &API{streamers: s, clips: c, subs: subs, assets: assets, templates: templates, library: library, videos: v, jobs: j, log: l}
+func New(s *streamer.Service, c *clip.Service, subs *subscription.Service, assets *assets.Service, templates *videotemplate.Service, library *media.Library, v *media.Videos, j *processing.Jobs, instagram *instagram.Service, l *slog.Logger) *API {
+	return &API{streamers: s, clips: c, subs: subs, assets: assets, templates: templates, library: library, videos: v, jobs: j, instagram: instagram, log: l}
 }
 func (a *API) Router() http.Handler {
 	r := chi.NewRouter()
@@ -82,6 +84,10 @@ func (a *API) Router() http.Handler {
 	r.Get("/api/jobs/{id}", a.getJob)
 	r.Get("/api/videos", a.readyVideos)
 	r.Get("/api/videos/{id}/download", a.downloadVideo)
+	r.Get("/api/videos/{id}/content", a.streamVideo)
+	r.Post("/api/videos/{id}/instagram", a.createInstagramContainer)
+	r.Get("/api/videos/{id}/instagram/{containerID}", a.instagramContainerStatus)
+	r.Post("/api/videos/{id}/instagram/{containerID}/publish", a.publishInstagramContainer)
 	r.Delete("/api/videos/{id}", a.deleteVideo)
 	return r
 }
@@ -110,6 +116,12 @@ func (a *API) readyVideos(w http.ResponseWriter, r *http.Request) {
 	write(w, 200, map[string]any{"data": x})
 }
 func (a *API) downloadVideo(w http.ResponseWriter, r *http.Request) {
+	a.sendVideo(w, r, true)
+}
+func (a *API) streamVideo(w http.ResponseWriter, r *http.Request) {
+	a.sendVideo(w, r, false)
+}
+func (a *API) sendVideo(w http.ResponseWriter, r *http.Request, attachment bool) {
 	object, filename, e := a.videos.Download(r.Context(), chi.URLParam(r, "id"))
 	if e != nil {
 		fail(w, 404, e)
@@ -122,13 +134,81 @@ func (a *API) downloadVideo(w http.ResponseWriter, r *http.Request) {
 		contentType = "video/mp4"
 	}
 	w.Header().Set("Content-Type", contentType)
-	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": filename}))
+	disposition := "inline"
+	if attachment {
+		disposition = "attachment"
+	}
+	w.Header().Set("Content-Disposition", mime.FormatMediaType(disposition, map[string]string{"filename": filename}))
 	if object.Size >= 0 {
 		w.Header().Set("Content-Length", strconv.FormatInt(object.Size, 10))
 	}
 	if _, e = io.Copy(w, object.Body); e != nil {
 		a.log.Error("stream rendered video", "video_id", chi.URLParam(r, "id"), "error", e)
 	}
+}
+
+type instagramCreateRequest struct {
+	VideoURL      string   `json:"videoUrl"`
+	Caption       string   `json:"caption"`
+	ShareToFeed   bool     `json:"shareToFeed"`
+	Collaborators []string `json:"collaborators"`
+	CoverURL      string   `json:"coverUrl"`
+	AudioName     string   `json:"audioName"`
+	LocationID    string   `json:"locationId"`
+	ThumbOffset   *int     `json:"thumbOffset"`
+}
+
+func (a *API) createInstagramContainer(w http.ResponseWriter, r *http.Request) {
+	if a.instagram == nil {
+		fail(w, 503, errText("Instagram publishing is not configured"))
+		return
+	}
+	exists, err := a.videos.Exists(r.Context(), chi.URLParam(r, "id"))
+	if err != nil || !exists {
+		fail(w, 404, errText("rendered video not found"))
+		return
+	}
+	var input instagramCreateRequest
+	if err = json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&input); err != nil {
+		fail(w, 400, errText("invalid Instagram settings"))
+		return
+	}
+	container, err := a.instagram.Create(r.Context(), instagram.CreateInput{
+		VideoURL: input.VideoURL, Caption: input.Caption, ShareToFeed: input.ShareToFeed,
+		Collaborators: input.Collaborators, CoverURL: input.CoverURL, AudioName: input.AudioName,
+		LocationID: input.LocationID, ThumbOffset: input.ThumbOffset,
+	})
+	if err != nil {
+		fail(w, 422, err)
+		return
+	}
+	write(w, http.StatusCreated, map[string]any{"data": container})
+}
+
+func (a *API) instagramContainerStatus(w http.ResponseWriter, r *http.Request) {
+	if a.instagram == nil {
+		fail(w, 503, errText("Instagram publishing is not configured"))
+		return
+	}
+	container, err := a.instagram.Status(r.Context(), chi.URLParam(r, "containerID"))
+	if err != nil {
+		fail(w, 422, err)
+		return
+	}
+	write(w, 200, map[string]any{"data": container})
+}
+
+func (a *API) publishInstagramContainer(w http.ResponseWriter, r *http.Request) {
+	if a.instagram == nil {
+		fail(w, 503, errText("Instagram publishing is not configured"))
+		return
+	}
+	media, err := a.instagram.Publish(r.Context(), chi.URLParam(r, "containerID"))
+	if err != nil {
+		fail(w, 422, err)
+		return
+	}
+	write(w, 201, map[string]any{"data": media})
 }
 func (a *API) deleteVideo(w http.ResponseWriter, r *http.Request) {
 	if e := a.videos.Delete(r.Context(), chi.URLParam(r, "id")); e != nil {
