@@ -69,28 +69,101 @@ func applyTimelineToSRT(path string, segments []composition.Segment) error {
 	return os.WriteFile(path, []byte(strings.Join(output, "\n\n")+"\n"), 0o600)
 }
 
-func layerSubtitleFiles(source, dir string, layers []composition.Layer) (map[string]string, error) {
+func layerSubtitleFiles(source, dir string, config composition.Config) (map[string]string, error) {
 	paths := map[string]string{}
-	for index, layer := range layers {
-		if !layer.Visible || layer.Type != "subtitles" || (layer.StartTime == 0 && layer.EndTime == 0) {
+	for index, layer := range config.Layers {
+		if !layer.Visible || layer.Type != "subtitles" {
 			continue
 		}
-		path := fmt.Sprintf("%s/subtitles-layer-%d.srt", strings.TrimRight(dir, "/"), index)
-		if err := trimSRTToOutputRange(source, path, layer.StartTime, layer.EndTime); err != nil {
-			return nil, err
+		path := source
+		if layer.StartTime > 0 || layer.EndTime > 0 {
+			path = fmt.Sprintf("%s/subtitles-layer-%d.srt", strings.TrimRight(dir, "/"), index)
+			if err := trimSRTToOutputRange(source, path, layer.StartTime, layer.EndTime); err != nil {
+				return nil, err
+			}
 		}
 		hasCues, err := srtHasCues(path)
 		if err != nil {
 			return nil, err
 		}
 		if hasCues {
-			paths[layer.ID] = path
+			assPath := fmt.Sprintf("%s/subtitles-layer-%d.ass", strings.TrimRight(dir, "/"), index)
+			if err = writePositionedASS(path, assPath, layer, config.Canvas); err != nil {
+				return nil, err
+			}
+			paths[layer.ID] = assPath
 		} else {
 			// Keep the key so FFmpeg does not fall back to the untrimmed SRT.
 			paths[layer.ID] = ""
 		}
 	}
 	return paths, nil
+}
+
+func writePositionedASS(source, destination string, layer composition.Layer, canvas composition.Canvas) error {
+	raw, err := os.ReadFile(source)
+	if err != nil {
+		return err
+	}
+	width := max(1, canvas.Width)
+	height := max(1, canvas.Height)
+	centerX := min(width, max(0, layer.X+layer.Width/2))
+	topY := min(height, max(0, layer.Y))
+	const assWidth, assHeight = 384, 288
+	position := fmt.Sprintf(`{\an8\pos(%d,%d)}`, scaleCoordinate(centerX, width, assWidth), scaleCoordinate(topY, height, assHeight))
+	blocks := strings.Split(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\n\n")
+	events := make([]string, 0, len(blocks))
+	for _, block := range blocks {
+		lines := strings.Split(block, "\n")
+		timingIndex := -1
+		var timing []string
+		for lineIndex, line := range lines {
+			if match := srtTiming.FindStringSubmatch(line); len(match) == 3 {
+				timingIndex, timing = lineIndex, match
+				break
+			}
+		}
+		if timingIndex < 0 || timingIndex+1 >= len(lines) {
+			continue
+		}
+		start, parseErr := parseSRTTime(timing[1])
+		if parseErr != nil {
+			return parseErr
+		}
+		end, parseErr := parseSRTTime(timing[2])
+		if parseErr != nil {
+			return parseErr
+		}
+		text := strings.Join(lines[timingIndex+1:], `\N`)
+		events = append(events, fmt.Sprintf("Dialogue: 0,%s,%s,Default,,0,0,0,,%s%s", formatASSTime(start), formatASSTime(end), position, text))
+	}
+	ass := fmt.Sprintf(`[Script Info]
+ScriptType: v4.00+
+PlayResX: %d
+PlayResY: %d
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,Arial,8,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,0,2,0,0,0,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+%s
+`, assWidth, assHeight, strings.Join(events, "\n"))
+	return os.WriteFile(destination, []byte(ass), 0o600)
+}
+
+func scaleCoordinate(value, sourceSize, targetSize int) int {
+	return (value*targetSize + sourceSize/2) / sourceSize
+}
+
+func formatASSTime(value time.Duration) string {
+	totalCentiseconds := value.Milliseconds() / 10
+	hours := totalCentiseconds / 360000
+	minutes := totalCentiseconds / 6000 % 60
+	seconds := totalCentiseconds / 100 % 60
+	centiseconds := totalCentiseconds % 100
+	return fmt.Sprintf("%d:%02d:%02d.%02d", hours, minutes, seconds, centiseconds)
 }
 
 func trimSRTToOutputRange(source, destination string, rangeStart, rangeEnd float64) error {

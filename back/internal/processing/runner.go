@@ -103,7 +103,7 @@ func (r *Runner) Process(ctx context.Context, in Input) (Result, error) {
 		subtitlePath := ""
 		if hasSubtitles {
 			subtitlePath = sub
-			subtitlePaths, e = layerSubtitleFiles(sub, d, config.Layers)
+			subtitlePaths, e = layerSubtitleFiles(sub, d, config)
 			if e != nil {
 				return out, fmt.Errorf("prepare subtitle tracks: %w", e)
 			}

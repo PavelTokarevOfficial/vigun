@@ -177,16 +177,11 @@ func buildFilter(config composition.Config, subtitlePath string, subtitlePaths m
 			}
 			style := layer.Style
 			fontSize := positiveOr(style.FontSize, 8)
-			alignment := positiveOr(style.Alignment, 2)
-			marginV := style.MarginV
-			if marginV <= 0 {
-				marginV = max(0, config.Canvas.Height-(layer.Y+layer.Height))
-			}
 			outline := nonNegativeOr(style.Outline, 2)
 			primary := safeASSColor(style.PrimaryColor, "&H00FFFFFF")
 			outlineColor := safeASSColor(style.OutlineColor, "&H00000000")
 			// This is the point where Whisper's local SRT is burned into the render.
-			filters = append(filters, fmt.Sprintf("[%s]subtitles=filename='%s':force_style='Alignment=%d,MarginV=%d,Fontsize=%d,PrimaryColour=%s,OutlineColour=%s,BorderStyle=1,Outline=%d'[%s]", base, escapeFilterPath(layerSubtitlePath), alignment, marginV, fontSize, primary, outlineColor, outline, next))
+			filters = append(filters, fmt.Sprintf("[%s]subtitles=filename='%s':force_style='Fontsize=%d,PrimaryColour=%s,OutlineColour=%s,BorderStyle=1,Outline=%d'[%s]", base, escapeFilterPath(layerSubtitlePath), fontSize, primary, outlineColor, outline, next))
 		case "text":
 			fontSize := positiveOr(layer.Style.FontSize, max(18, layer.Height/5))
 			filters = append(filters, fmt.Sprintf("[%s]drawtext=text='%s':x=%d:y=%d:fontsize=%d:fontcolor=white:borderw=%d:bordercolor=black%s[%s]", base, escapeDrawText(layer.Text), layer.X, layer.Y, fontSize, nonNegativeOr(layer.Style.Outline, 2), filterEnable(layer), next))

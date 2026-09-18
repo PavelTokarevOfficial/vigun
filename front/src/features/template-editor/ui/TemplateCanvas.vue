@@ -471,7 +471,7 @@ onBeforeUnmount(() => {
                   fontSize: Math.min(18, Math.max(10, layer.width * scale * 0.07)),
                   fill: layer.type === 'video' || layer.type === 'image' ? '#475569' : '#fff',
                   align: 'center',
-                  verticalAlign: 'middle',
+                  verticalAlign: layer.type === 'subtitles' ? 'top' : 'middle',
                   wrap: 'word',
                 }"
               />

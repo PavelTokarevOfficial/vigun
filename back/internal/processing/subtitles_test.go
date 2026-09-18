@@ -67,7 +67,10 @@ func TestLayerSubtitleFilesClipsCuesToLayerRange(t *testing.T) {
 	if err := os.WriteFile(source, []byte(input), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	paths, err := layerSubtitleFiles(source, dir, []composition.Layer{{ID: "captions", Type: "subtitles", Visible: true, StartTime: 2, EndTime: 6}})
+	paths, err := layerSubtitleFiles(source, dir, composition.Config{
+		Canvas: composition.Canvas{Width: 1080, Height: 1920},
+		Layers: []composition.Layer{{ID: "captions", Type: "subtitles", X: 90, Y: 200, Width: 900, Visible: true, StartTime: 2, EndTime: 6}},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,10 +79,13 @@ func TestLayerSubtitleFilesClipsCuesToLayerRange(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := string(raw)
-	for _, expected := range []string{"00:00:02,000 --> 00:00:03,000", "00:00:05,000 --> 00:00:06,000"} {
+	for _, expected := range []string{"Dialogue: 0,0:00:02.00,0:00:03.00", "Dialogue: 0,0:00:05.00,0:00:06.00"} {
 		if !strings.Contains(got, expected) {
 			t.Fatalf("layer SRT does not contain %q:\n%s", expected, got)
 		}
+	}
+	if !strings.Contains(got, `{\an8\pos(192,30)}First`) {
+		t.Fatalf("layer ASS does not contain editor position:\n%s", got)
 	}
 }
 
@@ -89,7 +95,10 @@ func TestLayerSubtitleFilesMarksEmptyRangeWithoutFallingBack(t *testing.T) {
 	if err := os.WriteFile(source, []byte("1\n00:00:00,000 --> 00:00:01,000\nFirst\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	paths, err := layerSubtitleFiles(source, dir, []composition.Layer{{ID: "late-captions", Type: "subtitles", Visible: true, StartTime: 5, EndTime: 6}})
+	paths, err := layerSubtitleFiles(source, dir, composition.Config{
+		Canvas: composition.Canvas{Width: 1080, Height: 1920},
+		Layers: []composition.Layer{{ID: "late-captions", Type: "subtitles", Visible: true, StartTime: 5, EndTime: 6}},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
