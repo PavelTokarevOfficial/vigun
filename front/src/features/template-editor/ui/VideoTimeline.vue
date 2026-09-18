@@ -67,6 +67,11 @@ const outputDuration = computed(() =>
     0,
   ),
 )
+const hasMontage = computed(
+  () =>
+    props.segments.length > 1 ||
+    props.segments.some((segment) => (segment.source ?? 'clip') !== 'clip'),
+)
 const timelineDuration = computed(() =>
   Math.max(
     1,
@@ -227,11 +232,15 @@ function rebuildRows() {
   }
 
   rows.value = [
-    {
-      id: 'sequence-row',
-      data: { label: 'Монтаж: источники видео и звук' },
-      actions: sequenceActions,
-    },
+    ...(hasMontage.value
+      ? [
+          {
+            id: 'sequence-row',
+            data: { label: 'Монтаж: источники видео и звук' },
+            actions: sequenceActions,
+          } satisfies TimelineRow,
+        ]
+      : []),
     ...layerRows,
   ]
 }
@@ -1219,7 +1228,7 @@ function readVideoDuration(url?: string) {
     </div>
 
     <div class="mt-3 flex flex-wrap gap-x-4 gap-y-2 text-xs text-slate-500">
-      <span
+      <span v-if="hasMontage"
         ><i
           class="mr-1 inline-block size-2 rounded-full bg-violet-600"
         />Монтаж</span
