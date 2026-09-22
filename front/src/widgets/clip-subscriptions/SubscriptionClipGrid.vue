@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { Check, ChevronDown, ChevronUp, ExternalLink } from '@lucide/vue'
+import { Check, ChevronDown, ChevronUp } from '@lucide/vue'
 import { computed, ref } from 'vue'
+import twitchIcon from '@/assets/twitch-icon.svg'
 import type { SubscriptionFeed, TwitchClip } from '@/entities/clip/model/types'
 import ClipImportButton from '@/features/clip-import/ClipImportButton.vue'
 
@@ -97,9 +98,9 @@ function originalIndex(clip: TwitchClip) {
             :href="clip.url"
             target="_blank"
             rel="noopener noreferrer"
-            class="inline-flex items-center gap-1 text-sm text-violet-700"
+            class="grid place-content-center rounded-xl border h-full px-2 transition border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
           >
-            <ExternalLink class="size-4" />Twitch
+            <img :src="twitchIcon" alt="twitch-icon" class="w-5 h-5">
           </a>
           <ClipImportButton
             :saved="clip.saved"

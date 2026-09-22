@@ -181,44 +181,41 @@ onBeforeUnmount(() => window.removeEventListener('keydown', keydown))
                 </div>
               </div>
 
-              <div class="p-4 sm:p-5">
-                <h3 class="text-lg font-semibold">{{ clip.title }}</h3>
-                <p
-                  v-if="clip.creator_name"
-                  class="inline-block mt-1 text-sm font-medium"
-                  :class="
-                    clip.creator_name.toLowerCase() === 'saint___paul'
-                      ? 'bg-red-500 text-white text-lg px-3 py-1 rounded-lg'
-                      : 'text-slate-700'
-                  "
-                >
-                  Автор клипа: {{ clip.creator_name }}
-                </p>
-                <div
-                  class="mt-1 flex flex-wrap items-center gap-2 text-sm text-slate-500"
-                >
-                  <span>
-                    {{ new Date(clip.created_at).toLocaleDateString() }}
-                    ·
-                    {{ Math.round(clip.duration) }}
-                    сек.
+              <div class="p-2 px-4">
+                <h3 class="block text-lg font-semibold">
+                  <a
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    :href="clip.url"
+                    class="inline-flex items-center gap-1 text-sm text-violet-700 bg-violet-200 px-2 rounded-md min-w-20"
+                  >
+                    <ExternalLink class="size-4" /> {{ clip.title }}
+                  </a>
+                </h3>
+                <p class="inline-block mt-1 text-sm font-medium">
+                  <span
+                    v-if="clip.creator_name"
+                    :class="
+                      clip.creator_name.toLowerCase() === 'saint___paul'
+                        ? 'font-bold bg-red-500 text-white px-2 py-1 rounded-lg'
+                        : 'font-bold text-slate-700'
+                    "
+                  >
+                    {{ clip.creator_name }}
                   </span>
+
+                  ㅤ•ㅤ{{ new Date(clip.created_at).toLocaleDateString() }}ㅤ•ㅤ{{
+                    Math.round(clip.duration)
+                  }} сек ㅤ•ㅤ
                   <span
                     v-if="clip.viewed"
                     class="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700"
                   >
                     <Check class="size-3" />Просмотрено
                   </span>
-                </div>
-                <div class="mt-3 flex items-center justify-between gap-3">
-                  <a
-                    :href="clip.url"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    class="inline-flex items-center gap-1 text-sm text-violet-700"
-                  >
-                    <ExternalLink class="size-4" />Twitch
-                  </a>
+                </p>
+
+                <div class="mt-3 flex justify-end gap-3">
                   <slot name="action" :clip="clip" />
                 </div>
               </div>
