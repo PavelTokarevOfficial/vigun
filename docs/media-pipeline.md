@@ -1,5 +1,7 @@
 # Media pipeline
 
+Импорт Twitch-клипа сразу создаёт download-job. После скачивания пользователь может сохранить один или несколько интервалов исходника как готовый фрагмент без физической перезаписи source-файла. «Паровозик» собирает timeline из нескольких готовых фрагментов: первый clip остаётся основным входом render-job, остальные downloaded sources добавляются в immutable snapshot как служебные video assets. Если у выбранного шаблона включён train mode, настроенные video assets циклически вставляются между фрагментами как перебивки.
+
 Артефакты лежат в object storage: `sources/{clipID}/source.mp4`, `audio/{clipID}/audio.wav`, `subtitles/{clipID}/subtitles.srt` и `renders/{clipID}/{jobID}.mp4`.
 
 Worker берёт job транзакционно, скачивает исходный ролик через Chromium/Rod, извлекает mono WAV 16 kHz через FFmpeg, передаёт WAV в `whisper-cli` и получает SRT. Далее FFmpeg собирает vertical layout: размытый фон, исходный ролик по центру и burned-in SRT. Для этого образ намеренно проверяет FFmpeg-фильтр `subtitles` (он требует сборку с libass); FFmpeg без него не подходит для worker. Временные файлы существуют только в каталоге job и удаляются после него.

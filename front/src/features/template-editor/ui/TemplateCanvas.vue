@@ -17,6 +17,7 @@ const props = withDefaults(
     selectedLayerId: string | null
     assets?: Asset[]
     sourceUrl?: string
+    sourceUrls?: Record<string, string>
     timelineTime?: number
     thumbnailUrl?: string
     streamerName?: string
@@ -24,6 +25,7 @@ const props = withDefaults(
   {
     assets: () => [],
     sourceUrl: '',
+    sourceUrls: () => ({}),
     timelineTime: 0,
     thumbnailUrl: '',
     streamerName: '',
@@ -92,7 +94,10 @@ function sourceFor(layer: Layer) {
       return { url: asset?.url ?? '', video: asset?.kind === 'video' }
     }
     return {
-      url: props.sourceUrl || props.thumbnailUrl,
+      url:
+        (active?.clipId ? props.sourceUrls[active.clipId] : '') ||
+        props.sourceUrl ||
+        props.thumbnailUrl,
       video: Boolean(props.sourceUrl),
     }
   }

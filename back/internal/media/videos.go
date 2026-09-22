@@ -11,16 +11,17 @@ import (
 )
 
 type Video struct {
-	ID           string    `json:"id"`
-	ClipID       string    `json:"clipId"`
-	Title        string    `json:"title"`
-	Streamer     string    `json:"streamer"`
-	TwitchURL    string    `json:"twitchUrl"`
-	ThumbnailURL string    `json:"thumbnailUrl"`
-	TemplateName string    `json:"templateName"`
-	StorageKey   string    `json:"storageKey"`
-	URL          string    `json:"url"`
-	CreatedAt    time.Time `json:"createdAt"`
+	ID              string    `json:"id"`
+	ClipID          string    `json:"clipId"`
+	ProcessingJobID string    `json:"processingJobId"`
+	Title           string    `json:"title"`
+	Streamer        string    `json:"streamer"`
+	TwitchURL       string    `json:"twitchUrl"`
+	ThumbnailURL    string    `json:"thumbnailUrl"`
+	TemplateName    string    `json:"templateName"`
+	StorageKey      string    `json:"storageKey"`
+	URL             string    `json:"url"`
+	CreatedAt       time.Time `json:"createdAt"`
 }
 type Videos struct {
 	db      *pgxpool.Pool
@@ -30,7 +31,7 @@ type Videos struct {
 func NewVideos(db *pgxpool.Pool, s Storage) *Videos { return &Videos{db, s} }
 func (v *Videos) List(ctx context.Context) ([]Video, error) {
 	rows, e := v.db.Query(ctx, `
-		SELECT m.id,c.id,c.title,s.display_name,c.twitch_url,COALESCE(c.thumbnail_url,''),
+		SELECT m.id,c.id,COALESCE(m.processing_job_id::text,''),c.title,s.display_name,c.twitch_url,COALESCE(c.thumbnail_url,''),
 			COALESCE(j.template_snapshot->>'templateName',''),m.storage_key,m.created_at
 		FROM media_files m
 		JOIN clips c ON c.id=m.clip_id
@@ -45,7 +46,7 @@ func (v *Videos) List(ctx context.Context) ([]Video, error) {
 	out := []Video{}
 	for rows.Next() {
 		var x Video
-		if e = rows.Scan(&x.ID, &x.ClipID, &x.Title, &x.Streamer, &x.TwitchURL, &x.ThumbnailURL, &x.TemplateName, &x.StorageKey, &x.CreatedAt); e != nil {
+		if e = rows.Scan(&x.ID, &x.ClipID, &x.ProcessingJobID, &x.Title, &x.Streamer, &x.TwitchURL, &x.ThumbnailURL, &x.TemplateName, &x.StorageKey, &x.CreatedAt); e != nil {
 			return nil, e
 		}
 		x.URL, e = v.storage.PresignGet(ctx, x.StorageKey, 15*time.Minute)

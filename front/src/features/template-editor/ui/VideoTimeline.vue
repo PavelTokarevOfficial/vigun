@@ -24,15 +24,20 @@ import type { Layer, TimelineSegment } from '@/entities/template/model/types'
 import AppButton from '@/shared/ui/AppButton.vue'
 import AssetPickerDialog from './AssetPickerDialog.vue'
 
-const props = defineProps<{
-  segments: TimelineSegment[]
-  layers: Layer[]
-  assets: Asset[]
-  folders: AssetFolder[]
-  sourceDuration: number
-  selectedLayerId: string | null
-  selectedSegmentId: string | null
-}>()
+const props = withDefaults(
+  defineProps<{
+    segments: TimelineSegment[]
+    layers: Layer[]
+    assets: Asset[]
+    folders: AssetFolder[]
+    sourceDuration: number
+    selectedLayerId: string | null
+    selectedSegmentId: string | null
+    sourceOnly?: boolean
+    playheadTime?: number
+  }>(),
+  { sourceOnly: false, playheadTime: undefined },
+)
 const emit = defineEmits<{
   updateSegments: [segments: TimelineSegment[]]
   updateLayers: [layers: Layer[]]
@@ -48,6 +53,7 @@ const selectedID = ref<string | null>(
 )
 const selectedLayerIDs = ref<Set<string>>(new Set())
 const rows = ref<TimelineRow[]>([])
+const timelineEditor = ref<{ setTime: (time: number) => void } | null>(null)
 const pickerOpen = ref(false)
 const readingAsset = ref(false)
 const assetDurationWarning = ref('')
@@ -55,6 +61,7 @@ const draggedSegmentID = ref<string | null>(null)
 const manualScale = ref<number | null>(null)
 let groupMoveSnapshot = new Map<string, { start: number; end: number }>()
 const suppressActionClick = ref(false)
+let syncingPlayhead = false
 
 const effects: Record<string, TimelineEffect> = {
   sequence: { id: 'sequence', name: 'Монтаж видео' },
@@ -69,6 +76,7 @@ const outputDuration = computed(() =>
 )
 const hasMontage = computed(
   () =>
+    props.sourceOnly ||
     props.segments.length > 1 ||
     props.segments.some((segment) => (segment.source ?? 'clip') !== 'clip'),
 )
@@ -139,6 +147,18 @@ watch([() => props.segments, () => props.layers, outputDuration], rebuildRows, {
   deep: true,
   immediate: true,
 })
+watch(
+  () => props.playheadTime,
+  (time) => {
+    if (time === undefined || !Number.isFinite(time)) return
+    const next = clamp(time, 0, outputDuration.value)
+    if (Math.abs(next - currentTime.value) < 0.02) return
+    currentTime.value = next
+    syncingPlayhead = true
+    timelineEditor.value?.setTime(next)
+    syncingPlayhead = false
+  },
+)
 watch(
   [() => props.selectedLayerId, () => props.selectedSegmentId],
   ([layerID, segmentID]) => {
@@ -278,7 +298,7 @@ function selectAction(
 
 function setCurrentTime(time: number) {
   currentTime.value = time
-  emit('updateTime', time)
+  if (!syncingPlayhead) emit('updateTime', time)
 }
 
 function moveAction(params: {
@@ -1087,35 +1107,26 @@ function readVideoDuration(url?: string) {
 
 <template>
   <section class="rounded-xl border border-slate-200 bg-white p-4">
-    <div class="flex flex-wrap items-start justify-between gap-4">
-      <div>
-        <h3 class="font-semibold">Монтажный таймлайн</h3>
-        <p class="mt-1 max-w-3xl text-sm text-slate-500">
-          Выберите фрагмент или слой — разделение, удаление и скрытие применятся
-          именно к нему. Видео-ассет вставляется в позицию курсора; если курсор
-          стоит внутри Twitch-клипа, он разделится автоматически. Удерживайте
-          Shift, чтобы выбрать несколько фрагментов и перетащить их вместе.
-        </p>
-      </div>
-      <div class="text-right text-sm text-slate-500">
-        <p>Курсор: {{ formatTime(currentTime) }}</p>
-        <p>Результат: {{ formatTime(outputDuration) }}</p>
-      </div>
-    </div>
 
-    <div class="mt-4 flex flex-wrap items-center gap-2">
-      <AppButton :disabled="readingAsset" @click="pickerOpen = true">
+    <div class="flex flex-wrap items-center gap-2">
+      <AppButton
+        v-if="!sourceOnly"
+        :disabled="readingAsset"
+        @click="pickerOpen = true"
+      >
         <Video class="mr-1 inline size-4" />
         {{ readingAsset ? 'Читаем видео…' : 'Вставить видео' }}
       </AppButton>
       <AppButton
         variant="secondary"
+        class="grid place-content-center w-10 h-10 !p-0"
         :disabled="!canSplitSelected"
         @click="split"
       >
-        <Scissors class="mr-1 inline size-4" />Разделить по курсору
+        <Scissors class="inline size-4" />
       </AppButton>
       <AppButton
+        v-if="!sourceOnly"
         variant="secondary"
         :disabled="!canSplitAllLayers"
         @click="splitAllLayers"
@@ -1126,6 +1137,7 @@ function readVideoDuration(url?: string) {
         variant="secondary"
         :disabled="selectedSegmentIndex <= 0"
         title="Переместить выбранный фрагмент левее"
+        class="grid place-content-center w-10 h-10 !p-0"
         @click="moveSelected(-1)"
       >
         <ChevronLeft class="size-4" />
@@ -1133,6 +1145,7 @@ function readVideoDuration(url?: string) {
       <AppButton
         variant="secondary"
         :disabled="selectedSegmentIndex < 0 || selectedSegmentIndex >= segments.length - 1"
+        class="grid place-content-center w-10 h-10 !p-0"
         title="Переместить выбранный фрагмент правее"
         @click="moveSelected(1)"
       >
@@ -1149,11 +1162,11 @@ function readVideoDuration(url?: string) {
       </AppButton>
       <AppButton
         variant="danger"
+        class="grid place-content-center w-10 h-10 !p-0"
         :disabled="!canRemoveSelected"
         @click="removeSelected"
       >
-        <Trash2 class="mr-1 inline size-4" />
-        {{ selectedLayer ? 'Удалить слой' : 'Удалить фрагмент' }}
+        <Trash2 class="inline size-4" />
       </AppButton>
       <div
         class="ml-auto flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 p-1"
@@ -1195,6 +1208,7 @@ function readVideoDuration(url?: string) {
     </p>
     <div class="mt-4 overflow-hidden rounded-lg border border-slate-200">
       <TimelineEditor
+        ref="timelineEditor"
         v-model="rows"
         :effects="effects"
         :options="options"
@@ -1233,22 +1247,22 @@ function readVideoDuration(url?: string) {
           class="mr-1 inline-block size-2 rounded-full bg-violet-600"
         />Монтаж</span
       >
-      <span
+      <span v-if="!sourceOnly"
         ><i
           class="mr-1 inline-block size-2 rounded-full bg-blue-600"
         />Видео-слои</span
       >
-      <span
+      <span v-if="!sourceOnly"
         ><i
           class="mr-1 inline-block size-2 rounded-full bg-emerald-600"
         />Субтитры</span
       >
-      <span
+      <span v-if="!sourceOnly"
         ><i
           class="mr-1 inline-block size-2 rounded-full bg-pink-600"
         />Картинки</span
       >
-      <span
+      <span v-if="!sourceOnly"
         ><i
           class="mr-1 inline-block size-2 rounded-full bg-cyan-600"
         />Текст</span
@@ -1257,6 +1271,7 @@ function readVideoDuration(url?: string) {
   </section>
 
   <AssetPickerDialog
+    v-if="!sourceOnly"
     :open="pickerOpen"
     :assets="assets"
     :folders="folders"

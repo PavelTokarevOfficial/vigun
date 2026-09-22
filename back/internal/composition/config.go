@@ -15,6 +15,12 @@ type Config struct {
 	Canvas   Canvas    `json:"canvas"`
 	Layers   []Layer   `json:"layers"`
 	Timeline *Timeline `json:"timeline,omitempty"`
+	Train    *Train    `json:"train,omitempty"`
+}
+
+type Train struct {
+	Enabled            bool     `json:"enabled"`
+	TransitionAssetIDs []string `json:"transitionAssetIds,omitempty"`
 }
 
 type Timeline struct {
@@ -25,6 +31,7 @@ type Segment struct {
 	ID             string  `json:"id"`
 	Source         string  `json:"source,omitempty"`
 	AssetID        string  `json:"assetId,omitempty"`
+	ClipID         string  `json:"clipId,omitempty"`
 	Start          float64 `json:"start"`
 	End            float64 `json:"end"`
 	SourceDuration float64 `json:"sourceDuration,omitempty"`
@@ -139,6 +146,14 @@ func (c Config) AssetIDs() []string {
 			}
 		}
 	}
+	if c.Train != nil {
+		for _, id := range c.Train.TransitionAssetIDs {
+			if id != "" && !seen[id] {
+				seen[id] = true
+				ids = append(ids, id)
+			}
+		}
+	}
 	return ids
 }
 
@@ -181,6 +196,9 @@ func (c Config) Validate() error {
 				return fmt.Errorf("timeline segment %q exceeds source duration", segment.ID)
 			}
 		}
+	}
+	if c.Train != nil && len(c.Train.TransitionAssetIDs) > 20 {
+		return fmt.Errorf("train mode supports up to 20 transition assets")
 	}
 	ids := map[string]bool{}
 	for i, layer := range c.Layers {

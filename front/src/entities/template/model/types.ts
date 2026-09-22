@@ -46,12 +46,14 @@ export type TemplateConfig = {
   canvas: { width: number; height: number; fps: number; background: string }
   layers: Layer[]
   timeline?: { segments: TimelineSegment[] }
+  train?: { enabled: boolean; transitionAssetIds?: string[] }
 }
 
 export type TimelineSegment = {
   id: string
   source?: 'clip' | 'asset'
   assetId?: string
+  clipId?: string
   start: number
   end: number
   sourceDuration?: number

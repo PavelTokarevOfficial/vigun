@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import {
   ArrowLeft,
+  Check,
   Download,
   ExternalLink,
   Play,
   Plus,
   Redo2,
   RotateCcw,
+  Scissors,
   Send,
   Trash,
   Undo2,
@@ -20,8 +22,10 @@ import type {
 } from '../entities/asset/model/types'
 import {
   createDefaultConfig,
+  type Layer,
   normalizeConfig,
   type TemplateConfig,
+  type TimelineSegment,
   type VideoTemplate,
 } from '../entities/template/model/types'
 import { useTemplateEditor } from '../features/template-editor/model/useTemplateEditor'
@@ -47,17 +51,35 @@ type Clip = {
   progress: number
   lastJobType: string
   lastJobStatus: string
+  isReadyFragment: boolean
+  editTimeline?: { segments: TimelineSegment[] }
 }
 
 type Video = {
   id: string
   clipId: string
+  processingJobId: string
   title: string
   streamer: string
   twitchUrl: string
   thumbnailUrl: string
   templateName: string
   url: string
+  createdAt: string
+}
+
+type Job = {
+  id: string
+  clipId: string
+  clipTitle: string
+  type: string
+  status: 'pending' | 'running' | 'completed' | 'failed'
+  currentStep: string
+  error: string
+  progress: number
+  templateName: string
+  isTrain: boolean
+  fragmentCount: number
   createdAt: string
 }
 
@@ -87,7 +109,7 @@ type InstagramForm = {
   thumbOffset: string
 }
 
-type Column = 'downloaded' | 'ready'
+type Column = 'fragments' | 'renders'
 
 const defaultInstagramCaption = `Лучшие моменты со стримов в коротком формате 🎬
 
@@ -97,6 +119,7 @@ const defaultInstagramCaption = `Лучшие моменты со стримов
 
 const clips = ref<Clip[]>([])
 const videos = ref<Video[]>([])
+const jobs = ref<Job[]>([])
 const error = ref('')
 const busy = ref('')
 const dragged = ref<Clip | null>(null)
@@ -109,12 +132,23 @@ const selectedTemplate = ref<VideoTemplate | null>(null)
 const assets = ref<Asset[]>([])
 const folders = ref<AssetFolder[]>([])
 const sourceURL = ref('')
+const sourceURLs = ref<Record<string, string>>({})
+const processClipIDs = ref<string[]>([])
 const timelineTime = ref(0)
 const selectedTimelineSegmentID = ref<string | null>(null)
 const previewVideo = ref<VideoPreview | null>(null)
 const instagramVideo = ref<Video | null>(null)
 const instagramBusy = ref(false)
 const instagramMessage = ref('')
+const trainSelectionMode = ref(false)
+const selectedTrainClipIDs = ref(new Set<string>())
+const fragmentClip = ref<Clip | null>(null)
+const fragmentSourceURL = ref('')
+const fragmentSegments = ref<TimelineSegment[]>([])
+const fragmentSelectedSegmentID = ref<string | null>(null)
+const fragmentVideo = ref<HTMLVideoElement | null>(null)
+const fragmentPreviewTime = ref(0)
+const fragmentPreviewSegmentIndex = ref(0)
 const instagramForm = ref<InstagramForm>({
   tunnelUrl: '',
   caption: '',
@@ -127,42 +161,50 @@ const instagramForm = ref<InstagramForm>({
 })
 const renderEditor = useTemplateEditor(createDefaultConfig())
 
-const favorites = computed(() =>
-  clips.value.filter(
-    (clip) =>
-      clip.status === 'saved' ||
-      clip.status === 'downloading' ||
-      (clip.status === 'failed' && clip.lastJobType === 'download'),
-  ),
-)
 const downloaded = computed(() =>
   clips.value.filter(
     (clip) =>
-      clip.hasSource &&
-      ([
-        'downloaded',
-        'transcribing',
-        'ready_to_render',
-        'rendering',
-        'completed',
-      ].includes(clip.status) ||
-        (clip.status === 'failed' && clip.lastJobType === 'process')),
+      !clip.isReadyFragment &&
+      (clip.hasSource ||
+        ['saved', 'downloading'].includes(clip.status) ||
+        clip.status === 'failed'),
   ),
+)
+const readyFragments = computed(() =>
+  clips.value.filter((clip) => clip.isReadyFragment && clip.hasSource),
+)
+const trainJobs = computed(() =>
+  jobs.value
+    .filter(
+      (job) =>
+        job.type === 'process' &&
+        job.isTrain &&
+        (job.status !== 'completed' ||
+          videos.value.some((video) => video.processingJobId === job.id)),
+    )
+    .slice(0, 6),
+)
+const availableTemplates = computed(() =>
+  processClipIDs.value.length > 1
+    ? templates.value.filter((template) => template.config.train?.enabled)
+    : templates.value,
 )
 const processClip = computed(
   () => clips.value.find((clip) => clip.id === processClipID.value) ?? null,
 )
 async function load() {
   try {
-    const [clipResponse, videoResponse] = await Promise.all([
+    const [clipResponse, videoResponse, jobResponse] = await Promise.all([
       fetch('/api/clips'),
       fetch('/api/videos'),
+      fetch('/api/jobs'),
     ])
-    if (!clipResponse.ok || !videoResponse.ok) {
+    if (!clipResponse.ok || !videoResponse.ok || !jobResponse.ok) {
       throw new Error('Не удалось загрузить доску')
     }
     clips.value = (await clipResponse.json()).data || []
     videos.value = (await videoResponse.json()).data || []
+    jobs.value = (await jobResponse.json()).data || []
     const downloadedIDs = new Set(
       clips.value
         .filter(
@@ -209,22 +251,22 @@ async function action(
   await load()
 }
 
-async function openTemplateChooser(id: string) {
+async function openTemplateChooser(id: string, clipIDs: string[] = [id]) {
   error.value = ''
   templatesLoading.value = true
   processClipID.value = id
+  processClipIDs.value = clipIDs
   processStage.value = 'choose'
   selectedTemplate.value = null
   sourceURL.value = ''
   timelineTime.value = 0
   try {
-    const [templateResponse, assetResponse, sourceResponse] = await Promise.all(
-      [
+    const [templateResponse, assetResponse, ...sourceResponses] =
+      await Promise.all([
         fetch('/api/templates'),
         fetch('/api/assets'),
-        fetch(`/api/clips/${id}/source`),
-      ],
-    )
+        ...clipIDs.map((clipID) => fetch(`/api/clips/${clipID}/source`)),
+      ])
     if (!templateResponse.ok)
       throw new Error(
         await readError(templateResponse, 'Не удалось загрузить шаблоны'),
@@ -233,15 +275,19 @@ async function openTemplateChooser(id: string) {
       throw new Error(
         await readError(assetResponse, 'Не удалось загрузить ассеты'),
       )
-    if (!sourceResponse.ok)
-      throw new Error(
-        await readError(sourceResponse, 'Не удалось открыть скачанное видео'),
-      )
+    if (sourceResponses.some((response) => !response.ok))
+      throw new Error('Не удалось открыть один из скачанных фрагментов')
     templates.value = await readData<VideoTemplate[]>(templateResponse)
     const library = await readData<AssetLibrary>(assetResponse)
     assets.value = library.assets
     folders.value = library.folders
-    sourceURL.value = (await readData<{ url: string }>(sourceResponse)).url
+    const sourceItems = await Promise.all(
+      sourceResponses.map((response) => readData<{ url: string }>(response)),
+    )
+    sourceURLs.value = Object.fromEntries(
+      clipIDs.map((clipID, index) => [clipID, sourceItems[index]?.url ?? '']),
+    )
+    sourceURL.value = sourceURLs.value[id] ?? ''
     if (!templates.value.length) {
       error.value = 'Сначала создайте хотя бы один шаблон видео.'
       processClipID.value = null
@@ -255,21 +301,88 @@ async function openTemplateChooser(id: string) {
   }
 }
 
-function chooseTemplate(template: VideoTemplate) {
+async function chooseTemplate(template: VideoTemplate) {
   selectedTemplate.value = template
   renderEditor.replace(normalizeConfig(template.config))
-  renderEditor.updateConfig({
-    timeline: {
-      segments: [
-        {
-          id: `segment-${crypto.randomUUID().slice(0, 8)}`,
-          source: 'clip',
+  const selectedClips = processClipIDs.value
+    .map((id) => clips.value.find((clip) => clip.id === id))
+    .filter((clip): clip is Clip => Boolean(clip))
+  const transitionIDs = template.config.train?.enabled
+    ? (template.config.train.transitionAssetIds ?? [])
+    : []
+  const transitionDurations = new Map<string, number>()
+  await Promise.all(
+    transitionIDs.map(async (assetID) => {
+      const asset = assets.value.find((item) => item.id === assetID)
+      transitionDurations.set(assetID, await videoDuration(asset?.url))
+    }),
+  )
+  const segments = selectedClips.flatMap((clip, clipIndex) => {
+    const sourceSegments = clip.editTimeline?.segments?.length
+      ? clip.editTimeline.segments
+      : [
+          {
+            id: `fragment-${crypto.randomUUID().slice(0, 8)}`,
+            source: 'clip' as const,
+            start: 0,
+            end: Math.max(0.1, clip.duration),
+            sourceDuration: Math.max(0.1, clip.duration),
+          },
+        ]
+    const items: TimelineSegment[] = sourceSegments.map((segment) => ({
+      ...segment,
+      id: `segment-${crypto.randomUUID().slice(0, 8)}`,
+      source: 'clip' as const,
+      clipId: clip.id,
+      assetId: undefined,
+    }))
+    if (clipIndex < selectedClips.length - 1 && transitionIDs.length) {
+      const assetID = transitionIDs[clipIndex % transitionIDs.length]
+      if (assetID) {
+        const duration = transitionDurations.get(assetID) ?? 2
+        items.push({
+          id: `transition-${crypto.randomUUID().slice(0, 8)}`,
+          source: 'asset' as const,
+          assetId: assetID,
+          clipId: undefined,
           start: 0,
-          end: Math.max(0.1, processClip.value?.duration ?? 0.1),
-          sourceDuration: Math.max(0.1, processClip.value?.duration ?? 0.1),
-        },
-      ],
-    },
+          end: duration,
+          sourceDuration: duration,
+        })
+      }
+    }
+    return items
+  })
+  let outputCursor = 0
+  const transitionLayers: Layer[] = []
+  for (const segment of segments) {
+    const duration = Math.max(0, segment.end - segment.start)
+    if (segment.source === 'asset' && segment.assetId) {
+      const asset = assets.value.find((item) => item.id === segment.assetId)
+      transitionLayers.push({
+        id: `transition-layer-${crypto.randomUUID().slice(0, 8)}`,
+        trackId: 'train-transitions',
+        timelineSegmentId: segment.id,
+        name: `Перебивка · ${asset?.name ?? 'Видео'}`,
+        type: 'video',
+        source: 'asset',
+        assetId: segment.assetId,
+        x: 0,
+        y: 0,
+        width: renderEditor.draft.value.canvas.width,
+        height: renderEditor.draft.value.canvas.height,
+        visible: true,
+        opacity: 1,
+        fit: 'cover',
+        startTime: outputCursor,
+        endTime: outputCursor + duration,
+      })
+    }
+    outputCursor += duration
+  }
+  renderEditor.updateConfig({
+    timeline: { segments },
+    layers: [...renderEditor.draft.value.layers, ...transitionLayers],
   })
   timelineTime.value = 0
   selectedTimelineSegmentID.value = null
@@ -338,22 +451,30 @@ function removeEditorLayer(id: string) {
   }
   const timeline = renderEditor.draft.value.timeline
   const trackID = layer.trackId ?? layer.id
+  const removedSegmentIDs = new Set(
+    renderEditor.draft.value.layers
+      .filter((item) => (item.trackId ?? item.id) === trackID)
+      .map((item) => item.timelineSegmentId)
+      .filter((id): id is string => Boolean(id)),
+  )
   const remainingLayers = renderEditor.draft.value.layers.filter(
     (item) => (item.trackId ?? item.id) !== trackID,
   )
-  const hasAnotherLinkedLayer = remainingLayers.some(
-    (item) => item.timelineSegmentId === layer.timelineSegmentId,
+  const remainingLinkedSegmentIDs = new Set(
+    remainingLayers
+      .map((item) => item.timelineSegmentId)
+      .filter((id): id is string => Boolean(id)),
   )
   renderEditor.updateConfig({
     layers: remainingLayers,
     ...(timeline
       ? {
           timeline: {
-            segments: hasAnotherLinkedLayer
-              ? timeline.segments
-              : timeline.segments.filter(
-                  (segment) => segment.id !== layer.timelineSegmentId,
-                ),
+            segments: timeline.segments.filter(
+              (segment) =>
+                !removedSegmentIDs.has(segment.id) ||
+                remainingLinkedSegmentIDs.has(segment.id),
+            ),
           },
         }
       : {}),
@@ -386,8 +507,192 @@ function closeProcessDialog() {
   selectedTemplate.value = null
   processStage.value = 'choose'
   sourceURL.value = ''
+  sourceURLs.value = {}
+  processClipIDs.value = []
   timelineTime.value = 0
   selectedTimelineSegmentID.value = null
+}
+
+function videoDuration(url?: string) {
+  if (!url) return Promise.resolve(2)
+  return new Promise<number>((resolve) => {
+    const video = document.createElement('video')
+    const finish = (duration: number) => {
+      window.clearTimeout(timer)
+      video.removeAttribute('src')
+      resolve(duration)
+    }
+    const timer = window.setTimeout(() => finish(2), 5000)
+    video.preload = 'metadata'
+    video.onloadedmetadata = () =>
+      finish(Number.isFinite(video.duration) ? video.duration : 2)
+    video.onerror = () => finish(2)
+    video.src = url
+  })
+}
+
+async function updateFragment(
+  clip: Clip,
+  ready: boolean,
+  segments = clip.editTimeline?.segments,
+) {
+  busy.value = clip.id
+  error.value = ''
+  const response = await fetch(`/api/clips/${clip.id}/fragment`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      ready,
+      timeline: segments?.length ? { segments } : null,
+    }),
+  })
+  if (!response.ok)
+    error.value = await readError(response, 'Не удалось сохранить фрагмент')
+  busy.value = ''
+  await load()
+}
+
+async function openFragmentEditor(clip: Clip) {
+  busy.value = clip.id
+  error.value = ''
+  try {
+    const response = await fetch(`/api/clips/${clip.id}/source`)
+    fragmentSourceURL.value = (await readData<{ url: string }>(response)).url
+    fragmentClip.value = clip
+    fragmentSegments.value = (
+      clip.editTimeline?.segments?.length
+        ? clip.editTimeline.segments
+        : [
+            {
+              id: `fragment-${crypto.randomUUID().slice(0, 8)}`,
+              start: 0,
+              end: Math.max(0.1, clip.duration),
+              sourceDuration: Math.max(0.1, clip.duration),
+            },
+          ]
+    ).map((segment) => ({
+      ...segment,
+      source: 'clip' as const,
+      sourceDuration: segment.sourceDuration ?? clip.duration,
+    }))
+    fragmentSelectedSegmentID.value = fragmentSegments.value[0]?.id ?? null
+    fragmentPreviewTime.value = 0
+    fragmentPreviewSegmentIndex.value = 0
+  } catch (cause) {
+    error.value =
+      cause instanceof Error ? cause.message : 'Не удалось открыть исходник'
+  } finally {
+    busy.value = ''
+  }
+}
+
+function setFragmentTimelineTime(time: number) {
+  const duration = fragmentOutputDuration()
+  const target = Math.min(Math.max(0, time), duration)
+  let outputStart = 0
+  for (const [index, segment] of fragmentSegments.value.entries()) {
+    const duration = Math.max(0, segment.end - segment.start)
+    if (
+      target <= outputStart + duration ||
+      index === fragmentSegments.value.length - 1
+    ) {
+      fragmentPreviewSegmentIndex.value = index
+      fragmentPreviewTime.value = target
+      if (fragmentVideo.value) {
+        fragmentVideo.value.currentTime = Math.max(
+          0,
+          Math.min(segment.end, segment.start + target - outputStart),
+        )
+      }
+      return
+    }
+    outputStart += duration
+  }
+}
+
+function fragmentOutputDuration() {
+  return fragmentSegments.value.reduce(
+    (total, segment) => total + Math.max(0, segment.end - segment.start),
+    0,
+  )
+}
+
+function fragmentSegmentOutputStart(index: number) {
+  return fragmentSegments.value
+    .slice(0, index)
+    .reduce(
+      (total, segment) => total + Math.max(0, segment.end - segment.start),
+      0,
+    )
+}
+
+function updateFragmentSegments(segments: TimelineSegment[]) {
+  fragmentSegments.value = segments
+  setFragmentTimelineTime(
+    Math.min(fragmentPreviewTime.value, fragmentOutputDuration()),
+  )
+}
+
+function startFragmentPreview() {
+  const video = fragmentVideo.value
+  if (!video || !fragmentSegments.value.length) return
+  if (fragmentPreviewTime.value >= fragmentOutputDuration() - 0.05) {
+    setFragmentTimelineTime(0)
+  } else {
+    setFragmentTimelineTime(fragmentPreviewTime.value)
+  }
+}
+
+function updateFragmentPreview() {
+  const video = fragmentVideo.value
+  const index = fragmentPreviewSegmentIndex.value
+  const segment = fragmentSegments.value[index]
+  if (!video || !segment) return
+  if (video.currentTime >= segment.end - 0.04) {
+    const next = fragmentSegments.value[index + 1]
+    if (!next) {
+      fragmentPreviewTime.value = fragmentOutputDuration()
+      video.pause()
+      return
+    }
+    fragmentPreviewSegmentIndex.value = index + 1
+    fragmentPreviewTime.value = fragmentSegmentOutputStart(index + 1)
+    video.currentTime = next.start
+    void video.play().catch(() => undefined)
+    return
+  }
+  if (video.currentTime < segment.start) {
+    video.currentTime = segment.start
+    return
+  }
+  fragmentPreviewTime.value =
+    fragmentSegmentOutputStart(index) + video.currentTime - segment.start
+}
+
+async function saveFragmentEdit() {
+  const clip = fragmentClip.value
+  if (!clip) return
+  const segments = fragmentSegments.value
+    .map((segment) => ({ ...segment, source: 'clip' as const }))
+    .filter((segment) => segment.end > segment.start)
+  await updateFragment(clip, true, segments)
+  if (!error.value) fragmentClip.value = null
+}
+
+function toggleTrainClip(id: string) {
+  const next = new Set(selectedTrainClipIDs.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  selectedTrainClipIDs.value = next
+}
+
+function startTrain() {
+  const ids = [...selectedTrainClipIDs.value]
+  if (ids.length < 2) {
+    error.value = 'Выберите минимум два готовых фрагмента.'
+    return
+  }
+  void openTemplateChooser(ids[0] as string, ids)
 }
 
 async function remove(clip: Clip) {
@@ -528,7 +833,11 @@ async function publishToInstagram() {
     })
     const container = await readData<InstagramContainer>(response)
     let status = container
-    for (let attempt = 0; attempt < 60 && status.status === 'IN_PROGRESS'; attempt += 1) {
+    for (
+      let attempt = 0;
+      attempt < 60 && status.status === 'IN_PROGRESS';
+      attempt += 1
+    ) {
       await wait(5000)
       status = await readData<InstagramContainer>(
         await fetch(`/api/videos/${video.id}/instagram/${container.id}`),
@@ -577,20 +886,16 @@ function drop(column: Column) {
   dragged.value = null
   if (!clip) return
 
-  if (column === 'downloaded' && clip.status === 'saved') {
-    void action(clip.id, 'download')
+  if (column === 'fragments' && clip.hasSource && !clip.isReadyFragment) {
+    void updateFragment(clip, true)
   }
-  if (
-    column === 'ready' &&
-    ['downloaded', 'completed'].includes(clip.status) &&
-    !isProcessQueued(clip)
-  ) {
+  if (column === 'renders' && clip.isReadyFragment && !isProcessQueued(clip)) {
     void openTemplateChooser(clip.id)
   }
 }
 
 function statusText(clip: Clip) {
-  if (clip.status === 'saved') return 'В избранном'
+  if (clip.status === 'saved') return 'Ожидает скачивания'
   if (isProcessQueued(clip)) {
     return clip.lastJobStatus === 'running'
       ? `${clip.currentStep || 'Запуск обработки'} · ${clip.progress}%`
@@ -600,6 +905,29 @@ function statusText(clip: Clip) {
   if (clip.status === 'completed') return 'Есть готовый рендер'
   if (clip.status === 'failed') return 'Ошибка'
   return `${clip.currentStep || clip.status} · ${clip.progress}%`
+}
+
+function trainJobStatus(job: Job) {
+  if (job.status === 'pending') return 'В очереди'
+  if (job.status === 'running') return `Рендерится · ${job.progress}%`
+  if (job.status === 'completed') return 'Готово'
+  return 'Ошибка'
+}
+
+function trainJobStatusClass(job: Job) {
+  if (job.status === 'completed') return 'bg-emerald-100 text-emerald-700'
+  if (job.status === 'failed') return 'bg-red-100 text-red-700'
+  if (job.status === 'running') return 'bg-violet-100 text-violet-700'
+  return 'bg-amber-100 text-amber-700'
+}
+
+function videoForJob(job: Job) {
+  return videos.value.find((video) => video.processingJobId === job.id)
+}
+
+function openTrainJobVideo(job: Job) {
+  const video = videoForJob(job)
+  if (video) openRenderedVideo(video)
 }
 
 let timer: number | undefined
@@ -616,85 +944,96 @@ onBeforeUnmount(() => {
   <section>
     <ErrorState v-if="error" class="mt-4" :message="error" />
 
-    <div class="mt-6 grid gap-4 xl:grid-cols-4">
-      <section>
-        <h3 class="font-semibold">Избранное · {{ favorites.length }}</h3>
-        <div class="mt-3 space-y-3">
-          <p v-if="!favorites.length" class="text-sm text-slate-500">
-            Пока пусто.
+    <div class="mt-6 rounded-xl border border-slate-200 bg-white p-3">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 class="font-semibold">Доска монтажа</h2>
+          <p class="text-sm text-slate-500">
+            Скачайте клип, подготовьте фрагмент и отправьте его на рендер
+            отдельно или в общей сборке.
           </p>
-          <article
-            v-for="clip in favorites"
-            :key="clip.id"
-            draggable="true"
-            class="relative cursor-grab rounded-xl overflow-hidden active:cursor-grabbing"
-            @dragstart="dragged = clip"
-            @dragend="dragged = null"
-          >
-            <img
-              v-if="clip.thumbnailUrl"
-              :src="clip.thumbnailUrl"
-              draggable="false"
-              :alt="`Превью клипа: ${clip.title}`"
-              class="aspect-video w-full object-cover"
-            >
-
-            <div
-              class="absolute top-0 py-1 px-3 text-white [-webkit-text-stroke:2px_black] [paint-order:stroke_fill]"
-            >
-              <b>{{ clip.title }}</b>
-              <p> {{ clip.streamerName }} · {{ statusText(clip) }} </p>
-              <p v-if="clip.error" class="mt-1 text-sm text-red-600">
-                {{ clip.error }}
-              </p>
-            </div>
-
-            <div class="flex gap-2 absolute bottom-0 right-0 p-3">
-              <AppButton
-                class="grid h-8 w-8 place-content-center"
-                :disabled="busy === clip.id"
-                title="Посмотреть клип"
-                :aria-label="`Посмотреть клип «${clip.title}»`"
-                @click="openClipPreview(clip)"
-              >
-                <Play :size="16" />
-              </AppButton>
-              <AppButton
-                v-if="clip.status === 'saved'"
-                :disabled="busy === clip.id"
-                class="grid place-content-center w-8 h-8"
-                @click="action(clip.id, 'download')"
-              >
-                <Download :size="16" />
-              </AppButton>
-              <AppButton
-                v-if="clip.status === 'failed'"
-                class="grid place-content-center w-8 h-8"
-                :disabled="busy === clip.id"
-                @click="action(clip.id, 'retry')"
-              >
-                <RotateCcw :size="16" />
-              </AppButton>
-              <AppButton
-                v-if="canDelete(clip)"
-                variant="danger"
-                class="grid place-content-center w-8 h-8"
-                :disabled="busy === clip.id"
-                @click="remove(clip)"
-              >
-                <Trash :size="16" />
-              </AppButton>
-            </div>
-          </article>
         </div>
-      </section>
+        <div class="flex flex-wrap gap-2">
+          <AppButton
+            variant="secondary"
+            @click="trainSelectionMode = !trainSelectionMode; selectedTrainClipIDs = new Set()"
+          >
+            {{ trainSelectionMode ? 'Отменить паровозик' : 'Паровозик' }}
+          </AppButton>
+          <AppButton
+            v-if="trainSelectionMode"
+            :disabled="selectedTrainClipIDs.size < 2"
+            @click="startTrain"
+          >
+            Собрать выбранные · {{ selectedTrainClipIDs.size }}
+          </AppButton>
+        </div>
+      </div>
 
-      <!-- biome-ignore lint/a11y/noStaticElementInteractions: native drop target for the drag-and-drop board -->
-      <section
-        class="xl:border-l xl:border-dashed xl:border-slate-300 xl:pl-4"
-        @dragover.prevent
-        @drop="drop('downloaded')"
-      >
+      <div class="mt-3 border-t border-slate-200 pt-3">
+        <div class="flex items-center justify-between gap-3">
+          <h3 class="text-sm font-semibold">Рендеры паровозика</h3>
+          <span class="text-xs text-slate-500"
+            >Последние {{ trainJobs.length }}</span
+          >
+        </div>
+        <p v-if="!trainJobs.length" class="mt-2 text-sm text-slate-500">
+          Сборок пока нет. Выберите минимум два готовых фрагмента и нажмите
+          «Собрать выбранные».
+        </p>
+        <ul v-else class="mt-2 grid gap-2 lg:grid-cols-2 xl:grid-cols-3">
+          <li
+            v-for="job in trainJobs"
+            :key="job.id"
+            class="rounded-lg border border-slate-200 p-3"
+          >
+            <div class="flex items-start justify-between gap-2">
+              <div class="min-w-0">
+                <p class="truncate text-sm font-medium">
+                  Паровозик · {{ job.fragmentCount }} фрагм.
+                </p>
+                <p class="truncate text-xs text-slate-500">
+                  {{ job.templateName || 'Шаблон' }} ·
+                  {{ new Date(job.createdAt).toLocaleString() }}
+                </p>
+              </div>
+              <span
+                class="shrink-0 rounded-full px-2 py-1 text-xs font-medium"
+                :class="trainJobStatusClass(job)"
+              >
+                {{ trainJobStatus(job) }}
+              </span>
+            </div>
+            <div
+              v-if="job.status === 'pending' || job.status === 'running'"
+              class="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100"
+            >
+              <div
+                class="h-full rounded-full bg-violet-600 transition-all"
+                :style="{ width: `${Math.max(job.status === 'pending' ? 4 : job.progress, 4)}%` }"
+              />
+            </div>
+            <p
+              v-if="job.status === 'failed' && job.error"
+              class="mt-2 line-clamp-2 text-xs text-red-600"
+            >
+              {{ job.error.split('\n')[0] }}
+            </p>
+            <AppButton
+              v-if="job.status === 'completed' && videoForJob(job)"
+              class="mt-2 w-full"
+              variant="secondary"
+              @click="openTrainJobVideo(job)"
+            >
+              <Play class="mr-1 inline size-4" />Посмотреть результат
+            </AppButton>
+          </li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="mt-6 grid gap-4 xl:grid-cols-4">
+      <section class="min-w-0">
         <h3 class="font-semibold">Скачанные · {{ downloaded.length }}</h3>
         <div class="mt-3 space-y-3">
           <p v-if="!downloaded.length" class="text-sm text-slate-500">
@@ -728,6 +1067,7 @@ onBeforeUnmount(() => {
 
             <div class="absolute right-0 bottom-0 flex gap-2 p-3">
               <AppButton
+                v-if="clip.hasSource"
                 class="grid h-8 w-8 place-content-center"
                 :disabled="busy === clip.id"
                 title="Посмотреть скачанное видео"
@@ -740,9 +1080,19 @@ onBeforeUnmount(() => {
                 v-if="['downloaded', 'completed'].includes(clip.status) && !isProcessQueued(clip)"
                 :disabled="busy === clip.id"
                 class="grid place-content-center w-8 h-8"
-                @click="openTemplateChooser(clip.id)"
+                title="Обрезать и подготовить фрагмент"
+                @click="openFragmentEditor(clip)"
               >
-                <Plus :size="16" />
+                <Scissors :size="16" />
+              </AppButton>
+              <AppButton
+                v-if="clip.hasSource && !isProcessQueued(clip)"
+                :disabled="busy === clip.id"
+                class="grid h-8 w-8 place-content-center"
+                title="Отправить в готовые фрагменты без редактирования"
+                @click="updateFragment(clip, true)"
+              >
+                <Check :size="16" />
               </AppButton>
               <AppButton
                 v-if="clip.status === 'failed'"
@@ -768,9 +1118,87 @@ onBeforeUnmount(() => {
 
       <!-- biome-ignore lint/a11y/noStaticElementInteractions: native drop target for the drag-and-drop board -->
       <section
+        class="xl:border-l xl:border-dashed xl:border-slate-300 xl:pl-4"
+        @dragover.prevent
+        @drop="drop('fragments')"
+      >
+        <h3 class="font-semibold">
+          Готовые фрагменты · {{ readyFragments.length }}
+        </h3>
+        <div class="mt-3 space-y-3">
+          <p v-if="!readyFragments.length" class="text-sm text-slate-500">
+            Пока пусто.
+          </p>
+          <article
+            v-for="clip in readyFragments"
+            :key="clip.id"
+            draggable="true"
+            class="relative cursor-grab overflow-hidden rounded-xl ring-offset-2 active:cursor-grabbing"
+            :class="selectedTrainClipIDs.has(clip.id) ? 'ring-2 ring-violet-500' : ''"
+            :tabindex="trainSelectionMode ? 0 : undefined"
+            @dragstart="dragged = clip"
+            @dragend="dragged = null"
+            @click="trainSelectionMode && toggleTrainClip(clip.id)"
+            @keydown.enter="trainSelectionMode && toggleTrainClip(clip.id)"
+          >
+            <img
+              v-if="clip.thumbnailUrl"
+              :src="clip.thumbnailUrl"
+              draggable="false"
+              :alt="`Превью фрагмента: ${clip.title}`"
+              class="aspect-video w-full object-cover"
+            >
+            <div
+              class="absolute top-0 px-3 py-1 text-white [-webkit-text-stroke:2px_black] [paint-order:stroke_fill]"
+            >
+              <b>{{ clip.title }}</b>
+              <p>{{ clip.streamerName }}</p>
+            </div>
+            <span
+              v-if="trainSelectionMode"
+              class="absolute left-3 bottom-3 grid size-7 place-content-center rounded-full bg-white text-violet-700"
+            >
+              <Check v-if="selectedTrainClipIDs.has(clip.id)" :size="17" />
+            </span>
+            <div v-else class="absolute right-0 bottom-0 flex gap-2 p-3">
+              <AppButton
+                class="grid h-8 w-8 place-content-center"
+                @click.stop="openClipPreview(clip)"
+              >
+                <Play :size="16" />
+              </AppButton>
+              <AppButton
+                class="grid h-8 w-8 place-content-center"
+                title="Изменить монтаж"
+                @click.stop="openFragmentEditor(clip)"
+              >
+                <Scissors :size="16" />
+              </AppButton>
+              <AppButton
+                class="grid h-8 w-8 place-content-center"
+                title="Отправить на рендер"
+                @click.stop="openTemplateChooser(clip.id)"
+              >
+                <Plus :size="16" />
+              </AppButton>
+              <AppButton
+                variant="secondary"
+                class="grid h-8 w-8 place-content-center"
+                title="Вернуть в скачанные"
+                @click.stop="updateFragment(clip, false)"
+              >
+                <ArrowLeft :size="16" />
+              </AppButton>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <!-- biome-ignore lint/a11y/noStaticElementInteractions: native drop target for the drag-and-drop board -->
+      <section
         class="col-span-2 xl:border-l xl:border-dashed xl:border-slate-300 xl:pl-4"
         @dragover.prevent
-        @drop="drop('ready')"
+        @drop="drop('renders')"
       >
         <h3 class="font-semibold">Готовые видео · {{ videos.length }}</h3>
         <div class="grid grid-cols-2 gap-3 mt-3">
@@ -922,13 +1350,19 @@ onBeforeUnmount(() => {
       aria-modal="true"
       aria-labelledby="instagram-dialog-title"
     >
-      <section class="max-h-[92vh] w-full max-w-3xl overflow-auto rounded-2xl bg-white shadow-2xl">
-        <header class="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4">
+      <section
+        class="max-h-[92vh] w-full max-w-3xl overflow-auto rounded-2xl bg-white shadow-2xl"
+      >
+        <header
+          class="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4"
+        >
           <div>
             <h2 id="instagram-dialog-title" class="text-lg font-semibold">
               Публикация Reels
             </h2>
-            <p class="mt-1 text-sm text-slate-600">{{ instagramVideo.title }}</p>
+            <p class="mt-1 text-sm text-slate-600">
+              {{ instagramVideo.title }}
+            </p>
           </div>
           <button
             type="button"
@@ -952,9 +1386,15 @@ onBeforeUnmount(() => {
               class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 font-normal"
             >
           </label>
-          <p class="break-all rounded-lg bg-slate-100 p-3 text-xs text-slate-600">
+          <p
+            class="break-all rounded-lg bg-slate-100 p-3 text-xs text-slate-600"
+          >
             Instagram получит:
-            <a :href='publicVideoURL(instagramVideo)' target="_blank" rel="noopener noreferrer">
+            <a
+              :href="publicVideoURL(instagramVideo)"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
               {{ publicVideoURL(instagramVideo) }}
             </a>
           </p>
@@ -972,7 +1412,9 @@ onBeforeUnmount(() => {
           </label>
 
           <details class="rounded-lg border border-slate-200 p-4">
-            <summary class="cursor-pointer text-sm font-semibold">Дополнительные настройки</summary>
+            <summary class="cursor-pointer text-sm font-semibold">
+              Дополнительные настройки
+            </summary>
             <div class="mt-4 grid gap-4 sm:grid-cols-2">
               <label class="block text-sm font-medium">
                 Соавторы через запятую
@@ -1025,7 +1467,11 @@ onBeforeUnmount(() => {
             {{ instagramMessage }}
           </p>
           <footer class="flex justify-end gap-2 border-t border-slate-200 pt-4">
-            <AppButton variant="secondary" :disabled="instagramBusy" @click="closeInstagramDialog">
+            <AppButton
+              variant="secondary"
+              :disabled="instagramBusy"
+              @click="closeInstagramDialog"
+            >
               Закрыть
             </AppButton>
             <AppButton type="submit" :disabled="instagramBusy">
@@ -1033,6 +1479,82 @@ onBeforeUnmount(() => {
             </AppButton>
           </footer>
         </form>
+      </section>
+    </div>
+
+    <div
+      v-if="fragmentClip"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="fragment-editor-title"
+    >
+      <section
+        class="max-h-[94vh] w-full max-w-6xl overflow-auto rounded-2xl bg-slate-50 shadow-2xl"
+      >
+        <header
+          class="sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-slate-200 bg-white px-5 py-4"
+        >
+          <div>
+            <h2 id="fragment-editor-title" class="text-lg font-semibold">
+              Монтаж скачанного видео
+            </h2>
+            <p class="mt-1 text-sm text-slate-500">
+              Оставьте нужные интервалы. Разделите диапазон и удалите часть,
+              чтобы вырезать паузу или неудачный момент.
+            </p>
+          </div>
+          <button
+            type="button"
+            class="rounded-lg p-2 hover:bg-slate-100"
+            aria-label="Закрыть"
+            @click="fragmentClip = null"
+          >
+            <X class="size-5" />
+          </button>
+        </header>
+        <div class="relative z-0 p-5 pb-24">
+          <video
+            ref="fragmentVideo"
+            :src="fragmentSourceURL"
+            controls
+            class="mx-auto aspect-video w-full max-w-3xl rounded-xl bg-black"
+            @play="startFragmentPreview"
+            @timeupdate="updateFragmentPreview"
+          />
+          <p class="mx-auto my-2 max-w-3xl text-sm text-slate-500">
+            Предпросмотр результата: {{ fragmentPreviewTime.toFixed(1) }} /
+            {{ fragmentOutputDuration().toFixed(1) }} сек.
+          </p>
+          <VideoTimeline
+            class="mt-5"
+            source-only
+            :segments="fragmentSegments"
+            :layers="[]"
+            :assets="[]"
+            :folders="[]"
+            :source-duration="Math.max(0.1, fragmentClip.duration)"
+            :selected-layer-id="null"
+            :selected-segment-id="fragmentSelectedSegmentID"
+            :playhead-time="fragmentPreviewTime"
+            @update-segments="updateFragmentSegments"
+            @select-segment="fragmentSelectedSegmentID = $event"
+            @update-time="setFragmentTimelineTime"
+          />
+        </div>
+        <footer
+          class="sticky bottom-0 z-30 flex justify-end gap-2 border-t border-slate-200 bg-white px-5 py-4 shadow-[0_-8px_20px_rgba(15,23,42,0.08)]"
+        >
+          <AppButton variant="secondary" @click="fragmentClip = null"
+            >Отмена</AppButton
+          >
+          <AppButton
+            :disabled="busy === fragmentClip.id"
+            @click="saveFragmentEdit"
+          >
+            Сохранить в готовые фрагменты
+          </AppButton>
+        </footer>
       </section>
     </div>
 
@@ -1058,10 +1580,16 @@ onBeforeUnmount(() => {
             </h2>
             <p class="mt-1 text-sm text-slate-600">
               <template v-if="processStage === 'choose'">
-                Шаблон по умолчанию отмечен первым, но можно выбрать любой.
+                {{
+                  processClipIDs.length > 1
+                    ? 'Показаны только шаблоны с включённой галочкой «Паровозик».'
+                    : 'Шаблон по умолчанию отмечен первым, но можно выбрать любой.'
+                }}
               </template>
               <template v-else>
-                {{ processClip?.title }}
+                {{
+                  processClipIDs.length > 1 ? `Паровозик из ${processClipIDs.length} фрагментов` : processClip?.title
+                }}
                 · {{ selectedTemplate?.name }}. Изменения применятся только к
                 этому рендеру.
               </template>
@@ -1083,8 +1611,15 @@ onBeforeUnmount(() => {
           v-else-if="processStage === 'choose'"
           class="grid gap-3 p-5 sm:grid-cols-2"
         >
+          <div
+            v-if="!availableTemplates.length"
+            class="rounded-xl border border-dashed border-slate-300 bg-white p-5 text-sm text-slate-600 sm:col-span-2"
+          >
+            Нет шаблонов для «Паровозика». Откройте редактор шаблона, включите
+            галочку «Паровозик» и сохраните шаблон.
+          </div>
           <button
-            v-for="template in templates"
+            v-for="template in availableTemplates"
             :key="template.id"
             type="button"
             class="relative overflow-hidden rounded-xl border bg-white text-left hover:border-violet-500 hover:ring-2 hover:ring-violet-100"
@@ -1167,6 +1702,7 @@ onBeforeUnmount(() => {
               :selected-layer-id="renderEditor.selectedLayerID.value"
               :assets="assets"
               :source-url="sourceURL"
+              :source-urls="sourceURLs"
               :timeline-time="timelineTime"
               :thumbnail-url="processClip?.thumbnailUrl"
               :streamer-name="processClip?.streamerName"

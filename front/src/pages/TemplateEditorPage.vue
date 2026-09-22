@@ -32,6 +32,36 @@ const previewAssetId = ref<string | null>(null)
 const error = ref('')
 const loading = ref(true)
 const saving = ref(false)
+function setTrainMode(enabled: boolean) {
+  editor.updateConfig({
+    train: {
+      enabled,
+      transitionAssetIds: editor.draft.value.train?.transitionAssetIds ?? [],
+    },
+  })
+}
+
+function addTransitionAsset(id: string) {
+  const selected = new Set(editor.draft.value.train?.transitionAssetIds ?? [])
+  selected.add(id)
+  editor.updateConfig({
+    train: {
+      enabled: true,
+      transitionAssetIds: [...selected],
+    },
+  })
+}
+
+function removeTransitionAsset(id: string) {
+  const selected = new Set(editor.draft.value.train?.transitionAssetIds ?? [])
+  selected.delete(id)
+  editor.updateConfig({
+    train: {
+      enabled: true,
+      transitionAssetIds: [...selected],
+    },
+  })
+}
 
 async function load() {
   loading.value = true
@@ -161,12 +191,19 @@ onBeforeRouteLeave(() =>
       <LayerPanel
         :layers="editor.draft.value.layers"
         :selected-layer-id="editor.selectedLayerID.value"
+        :train="editor.draft.value.train"
+        :assets="assets"
+        :folders="folders"
+        show-train-controls
         @select="editor.selectedLayerID.value = $event"
         @add="editor.addLayer"
         @update="editor.updateLayer"
         @duplicate="editor.duplicateLayer"
         @remove="editor.removeLayer"
         @move="editor.moveLayer"
+        @set-train-mode="setTrainMode"
+        @add-transition-asset="addTransitionAsset"
+        @remove-transition-asset="removeTransitionAsset"
       />
       <TemplateCanvas
         :config="editor.draft.value"

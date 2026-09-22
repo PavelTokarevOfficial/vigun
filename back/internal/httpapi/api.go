@@ -79,6 +79,7 @@ func (a *API) Router() http.Handler {
 	r.Delete("/api/clips/{id}", a.deleteClip)
 	r.Post("/api/clips/{id}/download", a.download)
 	r.Post("/api/clips/{id}/process", a.process)
+	r.Put("/api/clips/{id}/fragment", a.updateFragment)
 	r.Post("/api/clips/{id}/retry", a.retry)
 	r.Get("/api/jobs", a.listJobs)
 	r.Get("/api/jobs/{id}", a.getJob)
@@ -282,12 +283,36 @@ func (a *API) importClip(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, errText("streamerId, clip.id, clip.url and clip.title are required"))
 		return
 	}
-	id, e := a.clips.Import(r.Context(), in.StreamerID, in.Clip)
+	id, created, e := a.clips.Import(r.Context(), in.StreamerID, in.Clip)
 	if e != nil {
 		fail(w, 422, e)
 		return
 	}
-	write(w, 201, map[string]string{"id": id})
+	if created {
+		if e = a.clips.EnqueueDownload(r.Context(), id); e != nil {
+			fail(w, 422, e)
+			return
+		}
+	}
+	write(w, 201, map[string]string{"id": id, "status": "downloading"})
+}
+
+type fragmentInput struct {
+	Ready    bool                  `json:"ready"`
+	Timeline *composition.Timeline `json:"timeline"`
+}
+
+func (a *API) updateFragment(w http.ResponseWriter, r *http.Request) {
+	var in fragmentInput
+	if json.NewDecoder(r.Body).Decode(&in) != nil {
+		fail(w, 400, errText("invalid JSON"))
+		return
+	}
+	if e := a.clips.UpdateFragment(r.Context(), chi.URLParam(r, "id"), in.Ready, in.Timeline); e != nil {
+		fail(w, 422, e)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 func (a *API) localClips(w http.ResponseWriter, r *http.Request) {
 	x, e := a.clips.List(r.Context())

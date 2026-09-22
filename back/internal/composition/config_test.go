@@ -43,3 +43,15 @@ func TestValidateTimelineAssetAndCollectReference(t *testing.T) {
 		t.Fatalf("timeline asset was not collected: %#v", ids)
 	}
 }
+
+func TestTrainTransitionAssetsAreSnapshottedOnce(t *testing.T) {
+	config := Default(1080, 1920, 25)
+	config.Train = &Train{Enabled: true, TransitionAssetIDs: []string{"transition-1", "transition-2", "transition-1"}}
+	if err := config.Validate(); err != nil {
+		t.Fatalf("train config should be valid: %v", err)
+	}
+	ids := config.AssetIDs()
+	if len(ids) != 2 || ids[0] != "transition-1" || ids[1] != "transition-2" {
+		t.Fatalf("transition assets were not collected uniquely: %#v", ids)
+	}
+}

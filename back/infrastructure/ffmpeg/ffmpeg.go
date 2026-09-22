@@ -33,13 +33,19 @@ func (a *Adapter) Render(ctx context.Context, in processing.RenderInput) error {
 		return fmt.Errorf("invalid render composition: %w", err)
 	}
 
-	args := []string{"-y", "-i", in.SourcePath}
+	// Large vertical compositions may fan one source into several timeline and
+	// blur branches. Limit filter and encoder parallelism so FFmpeg does not get
+	// killed by a short-lived memory spike inside a constrained worker container.
+	args := []string{"-y", "-filter_threads", "1", "-filter_complex_threads", "1", "-i", in.SourcePath}
 	assetInputs, err := appendAssetInputs(&args, config, in.AssetPaths)
 	if err != nil {
 		return err
 	}
 	audioInputs, err := a.detectAudioInputs(ctx, in.SourcePath, in.AssetPaths, assetInputs)
 	if err != nil {
+		return err
+	}
+	if err := appendTimelineInputs(&args, config, in.SourcePath, in.AssetPaths, assetInputs, audioInputs); err != nil {
 		return err
 	}
 	filter, videoLabel, audioLabel, err := buildFilter(config, in.SubtitlePath, in.SubtitlePaths, assetInputs, audioInputs)
@@ -52,9 +58,50 @@ func (a *Adapter) Render(ctx context.Context, in processing.RenderInput) error {
 	} else {
 		args = append(args, "-map", "0:a?")
 	}
-	args = append(args, "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", in.Preset, "-crf", "20", "-c:a", "aac", "-shortest", "-movflags", "+faststart", in.OutputPath)
+	args = append(args, "-c:v", "libx264", "-threads", "2", "-pix_fmt", "yuv420p", "-preset", in.Preset, "-crf", "20", "-c:a", "aac", "-shortest", "-movflags", "+faststart", in.OutputPath)
 	return a.run(ctx, args...)
 }
+
+// appendTimelineInputs gives every timeline segment its own seeked input. A
+// single input fanned out into trim filters makes FFmpeg push all branches at
+// once. When segments are reordered (for example 20s..23s followed by 0s..2s),
+// concat then buffers the later branch as full-size raw frames. With multiple
+// visual layers that can exhaust the worker's memory. Independent inputs are
+// demand-driven by concat and start decoding at the requested segment.
+func appendTimelineInputs(args *[]string, config composition.Config, sourcePath string, paths map[string]string, inputs map[string]int, audioInputs map[int]bool) error {
+	if config.Timeline == nil {
+		return nil
+	}
+	nextIndex := 1
+	for _, index := range inputs {
+		if index >= nextIndex {
+			nextIndex = index + 1
+		}
+	}
+	for _, segment := range config.Timeline.Segments {
+		duration := segment.End - segment.Start
+		if duration <= 0 {
+			return fmt.Errorf("timeline segment %s has invalid duration", segment.ID)
+		}
+		path := sourcePath
+		hasAudio := audioInputs[0]
+		if segment.Source == "asset" {
+			path = paths[segment.AssetID]
+			assetIndex, ok := inputs[segment.AssetID]
+			if !ok || path == "" {
+				return fmt.Errorf("timeline segment %s has no resolved asset", segment.ID)
+			}
+			hasAudio = audioInputs[assetIndex]
+		}
+		*args = append(*args, "-ss", fmt.Sprintf("%g", segment.Start), "-t", fmt.Sprintf("%g", duration), "-i", path)
+		inputs[timelineInputKey(segment.ID)] = nextIndex
+		audioInputs[nextIndex] = hasAudio
+		nextIndex++
+	}
+	return nil
+}
+
+func timelineInputKey(segmentID string) string { return "timeline:" + segmentID }
 
 func (a *Adapter) detectAudioInputs(ctx context.Context, source string, paths map[string]string, assetInputs map[string]int) (map[int]bool, error) {
 	inputs := map[int]bool{}
@@ -275,7 +322,15 @@ func appendTimelineVideoFilters(filters *[]string, config composition.Config, la
 			if err != nil {
 				return "", err
 			}
-			*filters = append(*filters, fmt.Sprintf("%strim=start=%g:end=%g,setpts=PTS-STARTPTS,%s,fps=%d,setsar=1,format=rgba[%s]", input, segment.Start, segment.End, scaleFilter(layer), config.Canvas.FPS, label))
+			trim := fmt.Sprintf("trim=start=%g:end=%g,", segment.Start, segment.End)
+			if _, dedicated := assetInputs[timelineInputKey(segment.ID)]; dedicated {
+				trim = ""
+			}
+			pixelFormat := "yuv420p"
+			if layer.Opacity < 1 {
+				pixelFormat = "rgba"
+			}
+			*filters = append(*filters, fmt.Sprintf("%s%ssetpts=PTS-STARTPTS,%s,fps=%d,setsar=1,format=%s[%s]", input, trim, scaleFilter(layer), config.Canvas.FPS, pixelFormat, label))
 		}
 		inputs += "[" + label + "]"
 	}
@@ -319,7 +374,11 @@ func appendTimelineAudioFilters(filters *[]string, config composition.Config, as
 		}
 		label := fmt.Sprintf("clipa%d", index)
 		if audioInputs[inputIndex] {
-			*filters = append(*filters, fmt.Sprintf("[%d:a]atrim=start=%g:end=%g,asetpts=PTS-STARTPTS,aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo[%s]", inputIndex, segment.Start, segment.End, label))
+			trim := fmt.Sprintf("atrim=start=%g:end=%g,", segment.Start, segment.End)
+			if _, dedicated := assetInputs[timelineInputKey(segment.ID)]; dedicated {
+				trim = ""
+			}
+			*filters = append(*filters, fmt.Sprintf("[%d:a]%sasetpts=PTS-STARTPTS,aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo[%s]", inputIndex, trim, label))
 		} else {
 			*filters = append(*filters, fmt.Sprintf("anullsrc=r=48000:cl=stereo,atrim=duration=%g,asetpts=PTS-STARTPTS[%s]", segment.End-segment.Start, label))
 		}
@@ -330,6 +389,9 @@ func appendTimelineAudioFilters(filters *[]string, config composition.Config, as
 }
 
 func timelineSegmentIndex(segment composition.Segment, assetInputs map[string]int) (int, error) {
+	if index, ok := assetInputs[timelineInputKey(segment.ID)]; ok {
+		return index, nil
+	}
 	if segment.Source == "" || segment.Source == "clip" {
 		return 0, nil
 	}
