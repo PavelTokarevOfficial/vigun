@@ -5,8 +5,6 @@ import (
 	"time"
 )
 
-const WindowDays = 7
-
 type Clip struct {
 	ID           string    `json:"id"`
 	Title        string    `json:"title"`
@@ -52,6 +50,7 @@ type Repository interface {
 	UpdateIdentity(context.Context, string, RemoteUser) error
 	SaveWindow(context.Context, string, []RemoteClip, time.Time, time.Time) error
 	MarkViewed(context.Context, string) error
+	Clear(context.Context) (int64, error)
 }
 
 type ClipSource interface {
@@ -72,7 +71,7 @@ func (s *Service) List(ctx context.Context) ([]Feed, error) {
 	return s.repository.List(ctx)
 }
 
-func (s *Service) Sync(ctx context.Context, streamerID string) (int, error) {
+func (s *Service) Sync(ctx context.Context, streamerID string, startedAt, endedAt time.Time) (int, error) {
 	target, err := s.repository.Target(ctx, streamerID)
 	if err != nil {
 		return 0, err
@@ -88,8 +87,6 @@ func (s *Service) Sync(ctx context.Context, streamerID string) (int, error) {
 		}
 	}
 
-	endedAt := time.Now().UTC()
-	startedAt := endedAt.AddDate(0, 0, -WindowDays)
 	clips, err := s.source.Clips(ctx, target.TwitchID, startedAt, endedAt)
 	if err != nil {
 		return 0, err
@@ -102,4 +99,8 @@ func (s *Service) Sync(ctx context.Context, streamerID string) (int, error) {
 
 func (s *Service) MarkViewed(ctx context.Context, clipID string) error {
 	return s.repository.MarkViewed(ctx, clipID)
+}
+
+func (s *Service) Clear(ctx context.Context) (int64, error) {
+	return s.repository.Clear(ctx)
 }

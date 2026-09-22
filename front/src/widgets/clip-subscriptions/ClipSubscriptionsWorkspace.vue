@@ -23,7 +23,10 @@ const {
   previewInitialIndex,
   previewOpen,
 } = model
-const unregisterSync = syncControls.registerSync(() => void model.sync())
+const unregisterSync = syncControls.registerSync(
+  (range) => void model.sync(range),
+)
+const unregisterClear = syncControls.registerClear(() => void model.clear())
 const { hideViewed } = syncControls
 
 function formatSynced(value: string | null) {
@@ -44,6 +47,7 @@ function hasVisibleClips(feed: (typeof feeds.value)[number]) {
 onMounted(() => void model.load())
 onBeforeUnmount(() => {
   unregisterSync()
+  unregisterClear()
   model.dispose()
 })
 </script>

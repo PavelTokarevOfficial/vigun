@@ -51,6 +51,7 @@ func (a *API) Router() http.Handler {
 	})
 	r.Get("/api/streamers/{id}/clips", a.remoteClips)
 	r.Get("/api/subscriptions", a.listSubscriptions)
+	r.Delete("/api/subscriptions/clips", a.clearSubscriptionClips)
 	r.Post("/api/subscriptions/{id}/sync", a.syncSubscription)
 	r.Patch("/api/subscriptions/clips/{id}/viewed", a.markSubscriptionClipViewed)
 	r.Route("/api/assets", func(r chi.Router) {
@@ -240,13 +241,18 @@ func (a *API) remoteClips(w http.ResponseWriter, r *http.Request) {
 	write(w, 200, map[string]any{"data": x})
 }
 func clipWindow(r *http.Request) (time.Time, time.Time, error) {
-	const dateLayout = "2006-01-02"
-	now := time.Now().UTC()
 	startedRaw := r.URL.Query().Get("startedAt")
 	endedRaw := r.URL.Query().Get("endedAt")
 	if startedRaw == "" && endedRaw == "" {
+		now := time.Now().UTC()
 		return now.AddDate(0, 0, -7), now, nil
 	}
+	return parseClipWindow(startedRaw, endedRaw)
+}
+
+func parseClipWindow(startedRaw, endedRaw string) (time.Time, time.Time, error) {
+	const dateLayout = "2006-01-02"
+	now := time.Now().UTC()
 	if startedRaw == "" || endedRaw == "" {
 		return time.Time{}, time.Time{}, errText("startedAt and endedAt are required together")
 	}
@@ -394,6 +400,10 @@ type streamerPriorityInput struct {
 type streamerSubscriptionInput struct {
 	Subscribed bool `json:"subscribed"`
 }
+type subscriptionSyncInput struct {
+	StartedAt string `json:"startedAt"`
+	EndedAt   string `json:"endedAt"`
+}
 
 func (a *API) create(w http.ResponseWriter, r *http.Request) {
 	var in streamerInput
@@ -469,7 +479,17 @@ func (a *API) listSubscriptions(w http.ResponseWriter, r *http.Request) {
 	write(w, 200, map[string]any{"data": x})
 }
 func (a *API) syncSubscription(w http.ResponseWriter, r *http.Request) {
-	count, e := a.subs.Sync(r.Context(), chi.URLParam(r, "id"))
+	var in subscriptionSyncInput
+	if json.NewDecoder(r.Body).Decode(&in) != nil {
+		fail(w, 400, errText("invalid JSON"))
+		return
+	}
+	startedAt, endedAt, e := parseClipWindow(in.StartedAt, in.EndedAt)
+	if e != nil {
+		fail(w, 400, e)
+		return
+	}
+	count, e := a.subs.Sync(r.Context(), chi.URLParam(r, "id"), startedAt, endedAt)
 	if e != nil {
 		fail(w, 422, e)
 		return
@@ -482,6 +502,14 @@ func (a *API) markSubscriptionClipViewed(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+func (a *API) clearSubscriptionClips(w http.ResponseWriter, r *http.Request) {
+	count, e := a.subs.Clear(r.Context())
+	if e != nil {
+		fail(w, 500, e)
+		return
+	}
+	write(w, 200, map[string]any{"data": map[string]int64{"deleted": count}})
 }
 func (a *API) delete(w http.ResponseWriter, r *http.Request) {
 	if e := a.streamers.Delete(r.Context(), chi.URLParam(r, "id")); e != nil {

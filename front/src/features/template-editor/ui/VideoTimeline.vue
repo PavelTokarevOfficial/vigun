@@ -1107,7 +1107,6 @@ function readVideoDuration(url?: string) {
 
 <template>
   <section class="rounded-xl border border-slate-200 bg-white p-4">
-
     <div class="flex flex-wrap items-center gap-2">
       <AppButton
         v-if="!sourceOnly"

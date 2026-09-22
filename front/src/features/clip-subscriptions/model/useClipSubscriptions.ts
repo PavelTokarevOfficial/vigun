@@ -1,6 +1,7 @@
 import { computed, ref } from 'vue'
 import type { SubscriptionFeed, TwitchClip } from '@/entities/clip/model/types'
 import { readData, readError } from '@/shared/api/http'
+import type { DateRangeValue } from '@/shared/lib/dateRange'
 import type { SubscriptionSyncControls } from './syncControls'
 
 export function useClipSubscriptions(controls: SubscriptionSyncControls) {
@@ -26,10 +27,13 @@ export function useClipSubscriptions(controls: SubscriptionSyncControls) {
     } finally {
       loading.value = false
       controls.canSync.value = feeds.value.length > 0
+      controls.canClear.value = feeds.value.some(
+        (feed) => feed.clips.length > 0,
+      )
     }
   }
 
-  async function sync() {
+  async function sync(range: DateRangeValue) {
     if (controls.syncing.value || feeds.value.length === 0) return
     controls.syncing.value = true
     error.value = ''
@@ -43,7 +47,14 @@ export function useClipSubscriptions(controls: SubscriptionSyncControls) {
         try {
           const response = await fetch(
             `/api/subscriptions/${feed.streamerId}/sync`,
-            { method: 'POST' },
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                startedAt: range.start,
+                endedAt: range.end,
+              }),
+            },
           )
           if (!response.ok) {
             failed.push(feed.displayName)
@@ -129,6 +140,33 @@ export function useClipSubscriptions(controls: SubscriptionSyncControls) {
     }
   }
 
+  async function clear() {
+    if (
+      controls.syncing.value ||
+      controls.clearing.value ||
+      !controls.canClear.value
+    )
+      return
+    controls.clearing.value = true
+    error.value = ''
+    notice.value = ''
+    try {
+      const result = await readData<{ deleted: number }>(
+        await fetch('/api/subscriptions/clips', { method: 'DELETE' }),
+      )
+      closePreview()
+      await load()
+      notice.value = `Синхронизированные клипы удалены: ${result.deleted}.`
+    } catch (cause) {
+      error.value =
+        cause instanceof Error
+          ? cause.message
+          : 'Не удалось очистить синхронизированные клипы'
+    } finally {
+      controls.clearing.value = false
+    }
+  }
+
   function saveFromPreview(clip: TwitchClip) {
     if (previewFeed.value) void save(previewFeed.value, clip)
   }
@@ -137,6 +175,8 @@ export function useClipSubscriptions(controls: SubscriptionSyncControls) {
     controls.syncing.value = false
     controls.progress.value = ''
     controls.canSync.value = false
+    controls.canClear.value = false
+    controls.clearing.value = false
   }
 
   return {
@@ -150,6 +190,7 @@ export function useClipSubscriptions(controls: SubscriptionSyncControls) {
     previewOpen,
     load,
     sync,
+    clear,
     openPreview,
     closePreview,
     markViewed,

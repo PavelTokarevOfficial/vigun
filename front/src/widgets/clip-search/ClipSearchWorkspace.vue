@@ -1,12 +1,20 @@
 <script setup lang="ts">
-import { Play } from '@lucide/vue'
+import { BellPlus, Check, Play } from '@lucide/vue'
 import ClipImportButton from '@/features/clip-import/ClipImportButton.vue'
 import ClipSwipePreview from '@/features/clip-preview/ui/ClipSwipePreview.vue'
 import { useClipSearch } from '@/features/clip-search/model/useClipSearch'
+import StreamerSearchInput from '@/features/clip-search/ui/StreamerSearchInput.vue'
+import { dateInputValue } from '@/shared/lib/dateRange'
 import AppButton from '@/shared/ui/AppButton.vue'
+import AppDateRangePicker from '@/shared/ui/AppDateRangePicker.vue'
 import ErrorState from '@/shared/ui/ErrorState.vue'
 
 const search = useClipSearch()
+
+function updateDateRange(range: { start: string; end: string }) {
+  search.startedAt.value = range.start
+  search.endedAt.value = range.end
+}
 </script>
 
 <template>
@@ -16,34 +24,22 @@ const search = useClipSearch()
       Найдите клипы по нику стримера и добавьте подходящие в избранное.
     </p>
     <div class="mt-5 flex flex-wrap gap-3">
-      <label class="text-sm"
-        >Стример<select v-model="search.selected.value" class="mt-1 block">
-          <option value="">Выберите стримера</option>
-          <option
-            v-for="streamer in search.streamers.value"
-            :key="streamer.id"
-            :value="streamer.id"
-          >
-            {{ streamer.displayName }}
-          </option>
-        </select></label
-      >
-      <label class="text-sm"
-        >С<input
-          v-model="search.startedAt.value"
-          type="date"
-          :max="search.endedAt.value"
-          class="mt-1 block"
-        ></label
-      ><label class="text-sm"
-        >По<input
-          v-model="search.endedAt.value"
-          type="date"
-          :min="search.startedAt.value"
-          :max="search.dateInputValue()"
-          class="mt-1 block"
-        ></label
-      >
+      <StreamerSearchInput
+        v-model="search.query.value"
+        :busy="search.resolving.value || search.loading.value"
+        @search="search.search"
+      />
+      <div class="block min-w-72 text-sm">
+        <span class="mb-1 block">Период</span>
+        <AppDateRangePicker
+          :model-value="{
+            start: search.startedAt.value,
+            end: search.endedAt.value,
+          }"
+          :max="dateInputValue()"
+          @update:model-value="updateDateRange"
+        />
+      </div>
       <div v-if="search.selected.value" class="flex items-end">
         <AppButton
           :disabled="search.loading.value || search.clips.value.length === 0"
@@ -53,7 +49,28 @@ const search = useClipSearch()
           {{ search.loading.value ? 'Загружаем…' : 'Смотреть клипы' }}
         </AppButton>
       </div>
+      <div v-if="search.foundStreamer.value" class="flex items-end">
+        <AppButton
+          v-if="!search.foundStreamer.value.subscribed"
+          variant="secondary"
+          :disabled="search.subscribing.value"
+          @click="search.subscribe"
+        >
+          <BellPlus class="mr-1 inline size-4" />
+          {{ search.subscribing.value ? 'Подписываем…' : 'Подписаться' }}
+        </AppButton>
+        <span
+          v-else
+          class="inline-flex min-h-10 items-center gap-2 rounded-xl bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-700"
+        >
+          <Check class="size-4" />
+          Вы подписаны
+        </span>
+      </div>
     </div>
+    <p v-if="search.notice.value" class="mt-3 text-sm text-emerald-700">
+      {{ search.notice.value }}
+    </p>
     <ErrorState v-if="search.error.value" :message="search.error.value" />
     <div class="mt-6 grid gap-4 md:grid-cols-3">
       <article

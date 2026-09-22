@@ -13,6 +13,7 @@ type repositoryStub struct {
 	windowStarted time.Time
 	windowEnded   time.Time
 	viewedID      string
+	cleared       bool
 }
 
 func (r *repositoryStub) List(context.Context) ([]Feed, error) { return nil, nil }
@@ -33,22 +34,30 @@ func (r *repositoryStub) MarkViewed(_ context.Context, clipID string) error {
 	r.viewedID = clipID
 	return nil
 }
+func (r *repositoryStub) Clear(context.Context) (int64, error) {
+	r.cleared = true
+	return 3, nil
+}
 
 type clipSourceStub struct {
 	user          RemoteUser
 	clips         []RemoteClip
 	broadcasterID string
+	startedAt     time.Time
+	endedAt       time.Time
 }
 
 func (s *clipSourceStub) User(context.Context, string) (RemoteUser, error) {
 	return s.user, nil
 }
-func (s *clipSourceStub) Clips(_ context.Context, broadcasterID string, _, _ time.Time) ([]RemoteClip, error) {
+func (s *clipSourceStub) Clips(_ context.Context, broadcasterID string, startedAt, endedAt time.Time) ([]RemoteClip, error) {
 	s.broadcasterID = broadcasterID
+	s.startedAt = startedAt
+	s.endedAt = endedAt
 	return s.clips, nil
 }
 
-func TestSyncResolvesTwitchIdentityAndSavesSevenDayWindow(t *testing.T) {
+func TestSyncResolvesTwitchIdentityAndSavesSelectedWindow(t *testing.T) {
 	repository := &repositoryStub{target: Target{StreamerID: "streamer", TwitchLogin: "login"}}
 	source := &clipSourceStub{
 		user:  RemoteUser{ID: "twitch-user", DisplayName: "Streamer"},
@@ -56,7 +65,9 @@ func TestSyncResolvesTwitchIdentityAndSavesSevenDayWindow(t *testing.T) {
 	}
 	service := New(repository, source)
 
-	count, err := service.Sync(context.Background(), "streamer")
+	startedAt := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	endedAt := time.Date(2026, 9, 8, 0, 0, 0, 0, time.UTC)
+	count, err := service.Sync(context.Background(), "streamer", startedAt, endedAt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,9 +77,11 @@ func TestSyncResolvesTwitchIdentityAndSavesSevenDayWindow(t *testing.T) {
 	if repository.identity.ID != "twitch-user" || len(repository.savedClips) != 1 {
 		t.Fatalf("identity or clips were not persisted: %#v %#v", repository.identity, repository.savedClips)
 	}
-	window := repository.windowEnded.Sub(repository.windowStarted)
-	if window < 7*24*time.Hour-time.Minute || window > 7*24*time.Hour+time.Minute {
-		t.Fatalf("expected a seven day window, got %s", window)
+	if !repository.windowStarted.Equal(startedAt) || !repository.windowEnded.Equal(endedAt) {
+		t.Fatalf("unexpected repository window: %s - %s", repository.windowStarted, repository.windowEnded)
+	}
+	if !source.startedAt.Equal(startedAt) || !source.endedAt.Equal(endedAt) {
+		t.Fatalf("unexpected source window: %s - %s", source.startedAt, source.endedAt)
 	}
 }
 
@@ -80,5 +93,17 @@ func TestMarkViewedDelegatesToRepository(t *testing.T) {
 	}
 	if repository.viewedID != "clip-id" {
 		t.Fatalf("expected clip-id, got %q", repository.viewedID)
+	}
+}
+
+func TestClearDelegatesToRepository(t *testing.T) {
+	repository := &repositoryStub{}
+	service := New(repository, &clipSourceStub{})
+	count, err := service.Clear(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 3 || !repository.cleared {
+		t.Fatalf("expected three cleared clips, got %d", count)
 	}
 }

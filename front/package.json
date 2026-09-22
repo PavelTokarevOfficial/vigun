@@ -11,6 +11,7 @@
         "check": "biome check src"
     },
     "dependencies": {
+        "@internationalized/date": "^3.12.4",
         "@lucide/vue": "^1.43.0",
         "@vitejs/plugin-vue": "^5.0.5",
         "@vueuse/core": "^14.4.0",

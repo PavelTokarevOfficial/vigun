@@ -46,7 +46,7 @@ func (r *SubscriptionRepository) List(ctx context.Context) ([]subscription.Feed,
 		EXISTS(SELECT 1 FROM clips c WHERE c.twitch_clip_id=sc.twitch_clip_id),sc.viewed_at IS NOT NULL
 		FROM subscription_clips sc
 		JOIN streamers st ON st.id=sc.streamer_id
-		WHERE st.subscribed=true AND sc.twitch_created_at >= now() - interval '7 days'
+		WHERE st.subscribed=true
 		ORDER BY sc.twitch_created_at DESC`)
 	if err != nil {
 		return nil, err
@@ -82,13 +82,14 @@ func (r *SubscriptionRepository) UpdateIdentity(ctx context.Context, streamerID 
 	return err
 }
 
-func (r *SubscriptionRepository) SaveWindow(ctx context.Context, streamerID string, clips []subscription.RemoteClip, startedAt, syncedAt time.Time) error {
+func (r *SubscriptionRepository) SaveWindow(ctx context.Context, streamerID string, clips []subscription.RemoteClip, startedAt, endedAt time.Time) error {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
 
+	syncedAt := time.Now().UTC()
 	for _, clip := range clips {
 		_, err = tx.Exec(ctx, `INSERT INTO subscription_clips(
 			streamer_id,twitch_clip_id,title,twitch_url,thumbnail_url,duration,twitch_created_at,synced_at
@@ -103,7 +104,7 @@ func (r *SubscriptionRepository) SaveWindow(ctx context.Context, streamerID stri
 		}
 	}
 	if _, err = tx.Exec(ctx, `DELETE FROM subscription_clips
-		WHERE streamer_id=$1 AND twitch_created_at < $2`, streamerID, startedAt); err != nil {
+		WHERE streamer_id=$1 AND (twitch_created_at < $2 OR twitch_created_at >= $3)`, streamerID, startedAt, endedAt); err != nil {
 		return err
 	}
 	if _, err = tx.Exec(ctx, `UPDATE streamers SET subscription_synced_at=$2,updated_at=now() WHERE id=$1`, streamerID, syncedAt); err != nil {
@@ -122,4 +123,25 @@ func (r *SubscriptionRepository) MarkViewed(ctx context.Context, clipID string) 
 		return fmt.Errorf("subscription clip not found")
 	}
 	return nil
+}
+
+func (r *SubscriptionRepository) Clear(ctx context.Context) (int64, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback(ctx)
+
+	result, err := tx.Exec(ctx, `DELETE FROM subscription_clips`)
+	if err != nil {
+		return 0, err
+	}
+	if _, err = tx.Exec(ctx, `UPDATE streamers SET subscription_synced_at=NULL,updated_at=now()
+		WHERE subscription_synced_at IS NOT NULL`); err != nil {
+		return 0, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

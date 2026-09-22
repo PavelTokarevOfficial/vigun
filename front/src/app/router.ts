@@ -26,7 +26,13 @@ export default createRouter({
     { path: '/clips', redirect: '/search/clips' },
     { path: '/pipeline', component: () => import('../pages/PipelinePage.vue') },
     { path: '/assets', component: () => import('../pages/AssetsPage.vue') },
-    { path: '/templates', component: () => import('../pages/TemplatesPage.vue') },
-    { path: '/templates/:id', component: () => import('../pages/TemplateEditorPage.vue') },
+    {
+      path: '/templates',
+      component: () => import('../pages/TemplatesPage.vue'),
+    },
+    {
+      path: '/templates/:id',
+      component: () => import('../pages/TemplateEditorPage.vue'),
+    },
   ],
 })
