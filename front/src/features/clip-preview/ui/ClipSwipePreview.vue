@@ -38,7 +38,6 @@ const normalizedInitialIndex = computed(() =>
     Math.max(0, props.clips.length - 1),
   ),
 )
-const currentClip = computed(() => props.clips[currentIndex.value] ?? null)
 const canGoBack = computed(() => currentIndex.value > 0)
 const canGoForward = computed(() => currentIndex.value < props.clips.length - 1)
 const iframeAllowed = computed(
@@ -77,12 +76,13 @@ function iframeURL(clip: TwitchClip) {
 function setSwiper(instance: SwiperInstance) {
   swiper.value = instance
   currentIndex.value = instance.activeIndex
-  if (currentClip.value) emit('view', currentClip.value)
 }
 
 function slideChanged(instance: SwiperInstance) {
+  if (instance.activeIndex === currentIndex.value) return
+  const viewedClip = props.clips[currentIndex.value]
   currentIndex.value = instance.activeIndex
-  if (currentClip.value) emit('view', currentClip.value)
+  if (viewedClip) emit('view', viewedClip)
 }
 
 function navigate(delta: number) {
@@ -206,13 +206,16 @@ onBeforeUnmount(() => window.removeEventListener('keydown', keydown))
 
                   ㅤ•ㅤ{{ new Date(clip.created_at).toLocaleDateString() }}ㅤ•ㅤ{{
                     Math.round(clip.duration)
-                  }} сек ㅤ•ㅤ
-                  <span
+                  }} сек
+
+                  <template 
                     v-if="clip.viewed"
-                    class="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700"
                   >
-                    <Check class="size-3" />Просмотрено
-                  </span>
+                   ㅤ•ㅤ
+                    <span class="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
+                      <Check class="size-3" />Просмотрено
+                    </span>
+                  </template>
                 </p>
 
                 <div class="mt-3 flex justify-end gap-3">
