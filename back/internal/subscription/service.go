@@ -8,6 +8,7 @@ import (
 type Clip struct {
 	ID           string    `json:"id"`
 	Title        string    `json:"title"`
+	CreatorName  string    `json:"creator_name"`
 	URL          string    `json:"url"`
 	ThumbnailURL string    `json:"thumbnail_url"`
 	Duration     float64   `json:"duration"`
@@ -38,6 +39,7 @@ type RemoteUser struct {
 type RemoteClip struct {
 	ID           string
 	Title        string
+	CreatorName  string
 	URL          string
 	ThumbnailURL string
 	Duration     float64

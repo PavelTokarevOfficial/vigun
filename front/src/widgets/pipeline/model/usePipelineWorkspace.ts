@@ -593,7 +593,7 @@ export function usePipelineWorkspace() {
     instagramVideo.value = video
     instagramMessage.value = ''
     instagramForm.value = {
-      tunnelUrl: '',
+      tunnelUrl: "https://" + window.location.hostname,
       caption: defaultInstagramCaption,
       shareToFeed: true,
       collaborators: '',

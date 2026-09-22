@@ -30,6 +30,7 @@ func (s *SubscriptionSource) Clips(ctx context.Context, broadcasterID string, st
 		result = append(result, subscription.RemoteClip{
 			ID:           clip.ID,
 			Title:        clip.Title,
+			CreatorName:  clip.CreatorName,
 			URL:          clip.URL,
 			ThumbnailURL: clip.ThumbnailURL,
 			Duration:     clip.Duration,

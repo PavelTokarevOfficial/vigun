@@ -1,6 +1,7 @@
 export type TwitchClip = {
   id: string
   title: string
+  creator_name?: string
   url: string
   thumbnail_url: string
   duration: number

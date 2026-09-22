@@ -41,7 +41,7 @@ func (r *SubscriptionRepository) List(ctx context.Context) ([]subscription.Feed,
 		return feeds, err
 	}
 
-	clipRows, err := r.db.Query(ctx, `SELECT sc.streamer_id,sc.twitch_clip_id,sc.title,sc.twitch_url,
+	clipRows, err := r.db.Query(ctx, `SELECT sc.streamer_id,sc.twitch_clip_id,sc.title,COALESCE(sc.creator_name,''),sc.twitch_url,
 		COALESCE(sc.thumbnail_url,''),COALESCE(sc.duration,0),sc.twitch_created_at,
 		EXISTS(SELECT 1 FROM clips c WHERE c.twitch_clip_id=sc.twitch_clip_id),sc.viewed_at IS NOT NULL
 		FROM subscription_clips sc
@@ -56,7 +56,7 @@ func (r *SubscriptionRepository) List(ctx context.Context) ([]subscription.Feed,
 	for clipRows.Next() {
 		var streamerID string
 		var clip subscription.Clip
-		if err = clipRows.Scan(&streamerID, &clip.ID, &clip.Title, &clip.URL, &clip.ThumbnailURL, &clip.Duration, &clip.CreatedAt, &clip.Saved, &clip.Viewed); err != nil {
+		if err = clipRows.Scan(&streamerID, &clip.ID, &clip.Title, &clip.CreatorName, &clip.URL, &clip.ThumbnailURL, &clip.Duration, &clip.CreatedAt, &clip.Saved, &clip.Viewed); err != nil {
 			return nil, err
 		}
 		if index, ok := feedIndex[streamerID]; ok {
@@ -92,13 +92,13 @@ func (r *SubscriptionRepository) SaveWindow(ctx context.Context, streamerID stri
 	syncedAt := time.Now().UTC()
 	for _, clip := range clips {
 		_, err = tx.Exec(ctx, `INSERT INTO subscription_clips(
-			streamer_id,twitch_clip_id,title,twitch_url,thumbnail_url,duration,twitch_created_at,synced_at
-		) VALUES($1,$2,$3,$4,$5,$6,$7,$8)
+			streamer_id,twitch_clip_id,title,creator_name,twitch_url,thumbnail_url,duration,twitch_created_at,synced_at
+		) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)
 		ON CONFLICT(twitch_clip_id) DO UPDATE SET
-			streamer_id=EXCLUDED.streamer_id,title=EXCLUDED.title,twitch_url=EXCLUDED.twitch_url,
+			streamer_id=EXCLUDED.streamer_id,title=EXCLUDED.title,creator_name=EXCLUDED.creator_name,twitch_url=EXCLUDED.twitch_url,
 			thumbnail_url=EXCLUDED.thumbnail_url,duration=EXCLUDED.duration,
 			twitch_created_at=EXCLUDED.twitch_created_at,synced_at=EXCLUDED.synced_at`,
-			streamerID, clip.ID, clip.Title, clip.URL, clip.ThumbnailURL, clip.Duration, clip.CreatedAt, syncedAt)
+			streamerID, clip.ID, clip.Title, clip.CreatorName, clip.URL, clip.ThumbnailURL, clip.Duration, clip.CreatedAt, syncedAt)
 		if err != nil {
 			return err
 		}

@@ -151,7 +151,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', keydown))
                 <iframe
                   v-if="iframeAllowed && index === currentIndex"
                   :key="clip.id"
-                  :src="iframeURL(clip)+ '&autoplay=true&muted=false'"
+                  :src="`${iframeURL(clip)}&autoplay=true&muted=false`"
                   :title="`Twitch-клип: ${clip.title}`"
                   class="size-full border-0"
                   allow="autoplay; fullscreen"
@@ -183,6 +183,17 @@ onBeforeUnmount(() => window.removeEventListener('keydown', keydown))
 
               <div class="p-4 sm:p-5">
                 <h3 class="text-lg font-semibold">{{ clip.title }}</h3>
+                <p
+                  v-if="clip.creator_name"
+                  class="inline-block mt-1 text-sm font-medium"
+                  :class="
+                    clip.creator_name.toLowerCase() === 'saint___paul'
+                      ? 'bg-red-500 text-white text-lg px-3 py-1 rounded-lg'
+                      : 'text-slate-700'
+                  "
+                >
+                  Автор клипа: {{ clip.creator_name }}
+                </p>
                 <div
                   class="mt-1 flex flex-wrap items-center gap-2 text-sm text-slate-500"
                 >
