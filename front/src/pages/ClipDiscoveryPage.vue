@@ -42,7 +42,7 @@ function startSync(range: DateRangeValue) {
 <template>
   <section>
     <div
-      class="mb-6 flex items-center justify-between gap-2 border-b border-slate-200"
+      class="mb-6 flex items-center justify-between gap-2 border-b border-slate-200 min-h-15"
     >
       <nav
         class="-mb-px flex gap-3 overflow-x-auto sm:gap-5"
@@ -63,7 +63,7 @@ function startSync(range: DateRangeValue) {
           Поиск
         </RouterLink>
       </nav>
-      <div v-if="onSubscriptions" class="mb-3 flex shrink-0 items-center gap-2">
+      <div v-if="onSubscriptions" class="flex shrink-0 items-center gap-2">
         <button
           type="button"
           class="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 rounded-xl border border-red-200 bg-white px-3 text-xs font-semibold text-red-700 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40 sm:px-4 sm:text-sm"

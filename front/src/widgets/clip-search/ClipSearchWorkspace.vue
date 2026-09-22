@@ -19,11 +19,7 @@ function updateDateRange(range: { start: string; end: string }) {
 
 <template>
   <section>
-    <h1 class="text-2xl font-semibold sm:text-3xl">Поиск клипов</h1>
-    <p class="mt-1 text-slate-600">
-      Найдите клипы по нику стримера и добавьте подходящие в избранное.
-    </p>
-    <div class="mt-5 flex flex-wrap gap-3">
+    <div class="flex flex-wrap gap-3">
       <StreamerSearchInput
         v-model="search.query.value"
         :busy="search.resolving.value || search.loading.value"
