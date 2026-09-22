@@ -44,7 +44,7 @@ const selectedRange = computed<DateRangeValue>(() => {
 watch(
   () => props.open,
   (open) => {
-    if (open) preset.value = 'week'
+    if (open) preset.value = 'today'
   },
 )
 </script>
