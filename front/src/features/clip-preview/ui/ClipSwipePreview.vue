@@ -90,8 +90,14 @@ function navigate(delta: number) {
   else swiper.value?.slideNext()
 }
 
+function closePreview() {
+  const viewedClip = props.clips[currentIndex.value]
+  if (viewedClip) emit('view', viewedClip)
+  emit('close')
+}
+
 function keydown(event: KeyboardEvent) {
-  if (props.open && event.key === 'Escape') emit('close')
+  if (props.open && event.key === 'Escape') closePreview()
 }
 
 onMounted(() => window.addEventListener('keydown', keydown))
@@ -111,7 +117,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', keydown))
         type="button"
         class="absolute inset-0 cursor-default"
         aria-label="Закрыть предпросмотр"
-        @click="emit('close')"
+        @click="closePreview"
       />
       <section class="relative z-10 w-full max-w-5xl">
         <div class="mb-3 flex items-center justify-between text-white">
@@ -129,7 +135,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', keydown))
             type="button"
             class="grid size-11 place-items-center rounded-full bg-white/10 transition hover:bg-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
             aria-label="Закрыть предпросмотр"
-            @click="emit('close')"
+            @click="closePreview"
           >
             <X class="size-6" />
           </button>
@@ -208,11 +214,11 @@ onBeforeUnmount(() => window.removeEventListener('keydown', keydown))
                     Math.round(clip.duration)
                   }} сек
 
-                  <template 
-                    v-if="clip.viewed"
-                  >
-                   ㅤ•ㅤ
-                    <span class="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
+                  <template v-if="clip.viewed">
+                    ㅤ•ㅤ
+                    <span
+                      class="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700"
+                    >
                       <Check class="size-3" />Просмотрено
                     </span>
                   </template>
