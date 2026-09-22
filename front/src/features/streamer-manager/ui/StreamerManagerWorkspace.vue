@@ -8,7 +8,15 @@ import ErrorState from '@/shared/ui/ErrorState.vue'
 import AddStreamersDialog from './AddStreamersDialog.vue'
 
 const manager = useStreamerManager()
-const { busy, editNickname, editing, error, notice, rows } = manager
+const {
+  busy,
+  editNickname,
+  editing,
+  error,
+  notice,
+  rows,
+  subscriptionBusyIDs,
+} = manager
 
 function updatePriority(event: Event, id: string) {
   const priority = Number((event.target as HTMLInputElement).value)
@@ -77,7 +85,7 @@ onMounted(() => void manager.load())
                 type="checkbox"
                 class="size-4 accent-violet-600"
                 :checked="row.subscribed"
-                :disabled="busy"
+                :disabled="subscriptionBusyIDs.has(row.id)"
                 @change="updateSubscription($event, row.id)"
               >
               <Bell class="size-4 text-violet-600" />

@@ -7,6 +7,7 @@ export function useStreamerManager() {
   const error = ref('')
   const notice = ref('')
   const busy = ref(false)
+  const subscriptionBusyIDs = ref(new Set<string>())
   const addDialogOpen = ref(false)
   const nicknames = ref('')
   const editing = ref<Streamer | null>(null)
@@ -127,9 +128,15 @@ export function useStreamerManager() {
     })
   }
   async function setSubscribed(streamer: Streamer, subscribed: boolean) {
+    if (subscriptionBusyIDs.value.has(streamer.id)) return false
     const previous = streamer.subscribed
     streamer.subscribed = subscribed
-    const saved = await run(async () => {
+    subscriptionBusyIDs.value = new Set([
+      ...subscriptionBusyIDs.value,
+      streamer.id,
+    ])
+    error.value = ''
+    try {
       await request(
         fetch(`/api/streamers/${streamer.id}/subscription`, {
           method: 'PATCH',
@@ -138,9 +145,17 @@ export function useStreamerManager() {
         }),
         'Не удалось изменить подписку',
       )
-    })
-    if (!saved) streamer.subscribed = previous
-    return saved
+      return true
+    } catch (cause) {
+      streamer.subscribed = previous
+      error.value =
+        cause instanceof Error ? cause.message : 'Не удалось изменить подписку'
+      return false
+    } finally {
+      const next = new Set(subscriptionBusyIDs.value)
+      next.delete(streamer.id)
+      subscriptionBusyIDs.value = next
+    }
   }
 
   return {
@@ -148,6 +163,7 @@ export function useStreamerManager() {
     error,
     notice,
     busy,
+    subscriptionBusyIDs,
     addDialogOpen,
     nicknames,
     editing,
