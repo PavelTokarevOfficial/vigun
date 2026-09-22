@@ -4,6 +4,8 @@
 
 Schema is versioned by `golang-migrate` files in `back/migrations`. `streamers.twitch_login` and `clips.twitch_clip_id` are unique. `streamers.priority` — неотрицательное целое число, по которому стримеры сортируются от более приоритетных к менее приоритетным. `streamers.subscribed` включает подписочную ленту, а `subscription_synced_at` хранит время последней успешной синхронизации. Метаданные недельной ленты находятся в отдельной `subscription_clips`: уникальный Twitch clip, его streamer, preview metadata, Twitch `creator_name` и nullable `viewed_at`. Это не меняет состояние Pipeline, пока пользователь явно не импортирует клип. Старые записи удаляются при успешной синхронизации соответствующего стримера; ручная очистка удаляет все `subscription_clips` и сбрасывает `subscription_synced_at`, не удаляя строки `clips` или `media_files`. Binary media is never stored in PostgreSQL: `media_files.storage_key` points to object storage. `processing_jobs` is the durable queue.
 
+Instagram credentials are stored in the platform-specific `instagram_accounts` table. Alongside the token, it stores `token_updated_at`, nullable `token_expires_at`, the last successful check time, verified username and account type. Public account API responses expose this metadata and only a boolean token-presence flag; the access token is never returned to the frontend. YouTube and TikTok intentionally have no shared credential table until their provider-specific requirements are known.
+
 ## Processing jobs
 
 Для одного clip не может существовать два активных job одного типа (`pending` или `running`): это обеспечено partial unique index `processing_jobs_active_unique`. Ограничение дополняет `FOR UPDATE SKIP LOCKED` и защищает от двух одновременных API-запросов.

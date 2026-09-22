@@ -6,6 +6,8 @@ import type { PipelineWorkspaceModel } from '../model/usePipelineWorkspace'
 const props = defineProps<{ workspace: PipelineWorkspaceModel }>()
 const {
   closeInstagramDialog,
+  instagramAccounts,
+  instagramAccountsLoading,
   instagramBusy,
   instagramForm,
   instagramMessage,
@@ -49,6 +51,37 @@ const {
       </header>
 
       <form class="space-y-4 p-5" @submit.prevent="publishToInstagram">
+        <label class="block text-sm font-medium">
+          Instagram-аккаунт
+          <select
+            v-model="instagramForm.accountId"
+            required
+            :disabled="instagramAccountsLoading || instagramBusy"
+            class="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-normal"
+          >
+            <option value="" disabled>
+              {{
+                instagramAccountsLoading ? 'Загружаем аккаунты…' : 'Выберите аккаунт'
+              }}
+            </option>
+            <option
+              v-for="account in instagramAccounts"
+              :key="account.id"
+              :value="account.id"
+            >
+              @{{ account.nickname }} · {{ account.instagramUserId }}
+            </option>
+          </select>
+        </label>
+        <p
+          v-if="!instagramAccountsLoading && !instagramAccounts.length"
+          class="rounded-lg bg-amber-50 p-3 text-sm text-amber-800"
+        >
+          Сначала добавьте Instagram-аккаунт в
+          <RouterLink to="/accounts" class="font-semibold underline">
+            менеджере аккаунтов</RouterLink
+          >.
+        </p>
         <label class="block text-sm font-medium">
           HTTPS URL Cloudflare Tunnel
           <input
@@ -145,7 +178,10 @@ const {
           >
             Закрыть
           </AppButton>
-          <AppButton type="submit" :disabled="instagramBusy">
+          <AppButton
+            type="submit"
+            :disabled="instagramBusy || instagramAccountsLoading || !instagramForm.accountId"
+          >
             {{ instagramBusy ? 'Публикуем…' : 'Опубликовать' }}
           </AppButton>
         </footer>

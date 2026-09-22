@@ -74,6 +74,15 @@ func (a *API) Router() http.Handler {
 		r.Post("/{id}/duplicate", a.duplicateTemplate)
 		r.Delete("/{id}", a.deleteTemplate)
 	})
+	r.Route("/api/instagram-accounts", func(r chi.Router) {
+		r.Get("/", a.listInstagramAccounts)
+		r.Post("/", a.createInstagramAccount)
+		r.Put("/{id}", a.updateInstagramAccount)
+		r.Delete("/{id}", a.deleteInstagramAccount)
+		r.Post("/{id}/exchange-token", a.exchangeInstagramToken)
+		r.Post("/{id}/refresh-token", a.refreshInstagramToken)
+		r.Post("/{id}/check-token", a.checkInstagramToken)
+	})
 	r.Post("/api/clips/import", a.importClip)
 	r.Get("/api/clips", a.localClips)
 	r.Get("/api/clips/{id}/source", a.clipSource)
@@ -150,6 +159,7 @@ func (a *API) sendVideo(w http.ResponseWriter, r *http.Request, attachment bool)
 }
 
 type instagramCreateRequest struct {
+	AccountID     string   `json:"accountId"`
 	VideoURL      string   `json:"videoUrl"`
 	Caption       string   `json:"caption"`
 	ShareToFeed   bool     `json:"shareToFeed"`
@@ -161,10 +171,6 @@ type instagramCreateRequest struct {
 }
 
 func (a *API) createInstagramContainer(w http.ResponseWriter, r *http.Request) {
-	if a.instagram == nil {
-		fail(w, 503, errText("Instagram publishing is not configured"))
-		return
-	}
 	exists, err := a.videos.Exists(r.Context(), chi.URLParam(r, "id"))
 	if err != nil || !exists {
 		fail(w, 404, errText("rendered video not found"))
@@ -175,7 +181,7 @@ func (a *API) createInstagramContainer(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, errText("invalid Instagram settings"))
 		return
 	}
-	container, err := a.instagram.Create(r.Context(), instagram.CreateInput{
+	container, err := a.instagram.Create(r.Context(), input.AccountID, instagram.CreateInput{
 		VideoURL: input.VideoURL, Caption: input.Caption, ShareToFeed: input.ShareToFeed,
 		Collaborators: input.Collaborators, CoverURL: input.CoverURL, AudioName: input.AudioName,
 		LocationID: input.LocationID, ThumbOffset: input.ThumbOffset,
@@ -188,11 +194,7 @@ func (a *API) createInstagramContainer(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) instagramContainerStatus(w http.ResponseWriter, r *http.Request) {
-	if a.instagram == nil {
-		fail(w, 503, errText("Instagram publishing is not configured"))
-		return
-	}
-	container, err := a.instagram.Status(r.Context(), chi.URLParam(r, "containerID"))
+	container, err := a.instagram.Status(r.Context(), r.URL.Query().Get("accountId"), chi.URLParam(r, "containerID"))
 	if err != nil {
 		fail(w, 422, err)
 		return
@@ -201,16 +203,84 @@ func (a *API) instagramContainerStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) publishInstagramContainer(w http.ResponseWriter, r *http.Request) {
-	if a.instagram == nil {
-		fail(w, 503, errText("Instagram publishing is not configured"))
-		return
-	}
-	media, err := a.instagram.Publish(r.Context(), chi.URLParam(r, "containerID"))
+	media, err := a.instagram.Publish(r.Context(), r.URL.Query().Get("accountId"), chi.URLParam(r, "containerID"))
 	if err != nil {
 		fail(w, 422, err)
 		return
 	}
 	write(w, 201, map[string]any{"data": media})
+}
+
+func (a *API) listInstagramAccounts(w http.ResponseWriter, r *http.Request) {
+	items, err := a.instagram.Accounts(r.Context())
+	if err != nil {
+		fail(w, 500, err)
+		return
+	}
+	write(w, 200, map[string]any{"data": items})
+}
+
+func (a *API) createInstagramAccount(w http.ResponseWriter, r *http.Request) {
+	var input instagram.AccountInput
+	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&input) != nil {
+		fail(w, 400, errText("invalid Instagram account"))
+		return
+	}
+	item, err := a.instagram.CreateAccount(r.Context(), input)
+	if err != nil {
+		fail(w, 422, err)
+		return
+	}
+	write(w, 201, map[string]any{"data": item})
+}
+
+func (a *API) updateInstagramAccount(w http.ResponseWriter, r *http.Request) {
+	var input instagram.AccountInput
+	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&input) != nil {
+		fail(w, 400, errText("invalid Instagram account"))
+		return
+	}
+	item, err := a.instagram.UpdateAccount(r.Context(), chi.URLParam(r, "id"), input)
+	if err != nil {
+		fail(w, 422, err)
+		return
+	}
+	write(w, 200, map[string]any{"data": item})
+}
+
+func (a *API) deleteInstagramAccount(w http.ResponseWriter, r *http.Request) {
+	if err := a.instagram.DeleteAccount(r.Context(), chi.URLParam(r, "id")); err != nil {
+		fail(w, 422, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *API) exchangeInstagramToken(w http.ResponseWriter, r *http.Request) {
+	item, err := a.instagram.ExchangeToken(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		fail(w, 422, err)
+		return
+	}
+	write(w, 200, map[string]any{"data": item})
+}
+
+func (a *API) refreshInstagramToken(w http.ResponseWriter, r *http.Request) {
+	item, err := a.instagram.RefreshToken(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		fail(w, 422, err)
+		return
+	}
+	write(w, 200, map[string]any{"data": item})
+}
+
+func (a *API) checkInstagramToken(w http.ResponseWriter, r *http.Request) {
+	item, err := a.instagram.CheckToken(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		fail(w, 422, err)
+		return
+	}
+	write(w, 200, map[string]any{"data": item})
 }
 func (a *API) deleteVideo(w http.ResponseWriter, r *http.Request) {
 	if e := a.videos.Delete(r.Context(), chi.URLParam(r, "id")); e != nil {

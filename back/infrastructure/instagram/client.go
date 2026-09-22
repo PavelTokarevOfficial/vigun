@@ -18,6 +18,74 @@ type Client struct {
 	http                         *http.Client
 }
 
+type Factory struct {
+	version string
+	http    *http.Client
+}
+
+func NewFactory(version string) *Factory {
+	return &Factory{version: version, http: &http.Client{Timeout: 30 * time.Second}}
+}
+
+func (f *Factory) New(userID, accessToken string) app.Client {
+	return New(f.version, userID, accessToken)
+}
+
+func (f *Factory) Exchange(ctx context.Context, accessToken, appSecret string) (app.TokenResult, error) {
+	query := url.Values{
+		"grant_type":    {"ig_exchange_token"},
+		"client_secret": {appSecret},
+		"access_token":  {accessToken},
+	}
+	return f.tokenRequest(ctx, "https://graph.instagram.com/access_token?"+query.Encode())
+}
+
+func (f *Factory) Refresh(ctx context.Context, accessToken string) (app.TokenResult, error) {
+	query := url.Values{
+		"grant_type":   {"ig_refresh_token"},
+		"access_token": {accessToken},
+	}
+	return f.tokenRequest(ctx, "https://graph.instagram.com/refresh_access_token?"+query.Encode())
+}
+
+func (f *Factory) Inspect(ctx context.Context, accessToken string) (app.TokenProfile, error) {
+	query := url.Values{
+		"fields":       {"id,username,account_type"},
+		"access_token": {accessToken},
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://graph.instagram.com/me?"+query.Encode(), nil)
+	if err != nil {
+		return app.TokenProfile{}, err
+	}
+	var response struct {
+		ID          string `json:"id"`
+		Username    string `json:"username"`
+		AccountType string `json:"account_type"`
+	}
+	if err = (&Client{http: f.http}).do(request, &response); err != nil {
+		return app.TokenProfile{}, err
+	}
+	return app.TokenProfile{ID: response.ID, Username: response.Username, AccountType: response.AccountType}, nil
+}
+
+func (f *Factory) tokenRequest(ctx context.Context, endpoint string) (app.TokenResult, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return app.TokenResult{}, err
+	}
+	var response struct {
+		AccessToken string `json:"access_token"`
+		ExpiresIn   int64  `json:"expires_in"`
+	}
+	if err = (&Client{http: f.http}).do(request, &response); err != nil {
+		return app.TokenResult{}, err
+	}
+	return app.TokenResult{
+		AccessToken: response.AccessToken,
+		ExpiresIn:   time.Duration(response.ExpiresIn) * time.Second,
+	}, nil
+}
+
 func New(version, userID, accessToken string) *Client {
 	version = strings.Trim(strings.TrimSpace(version), "/")
 	host := "https://graph.facebook.com/"

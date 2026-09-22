@@ -15,6 +15,7 @@ const primaryNavigation = [
   { url: '/pipeline', label: 'Pipeline' },
 ]
 const menuNavigation = [
+  { url: '/accounts', label: 'Менеджер аккаунтов' },
   { url: '/streamers', label: 'Стримеры' },
   { url: '/templates', label: 'Шаблоны видео' },
   { url: '/assets', label: 'Ассеты' },

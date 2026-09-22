@@ -11,6 +11,7 @@ import type {
   PipelineVideoPreview,
   RenderedVideo,
 } from '@/entities/pipeline/model/types'
+import type { InstagramAccount } from '@/entities/social-account/model/types'
 import {
   createDefaultConfig,
   type Layer,
@@ -65,6 +66,8 @@ export function usePipelineWorkspace() {
   const previewVideo = ref<PipelineVideoPreview | null>(null)
   const instagramVideo = ref<RenderedVideo | null>(null)
   const instagramBusy = ref(false)
+  const instagramAccountsLoading = ref(false)
+  const instagramAccounts = ref<InstagramAccount[]>([])
   const instagramMessage = ref('')
   const trainSelectionMode = ref(false)
   const selectedTrainClipIDs = ref(new Set<string>())
@@ -76,6 +79,7 @@ export function usePipelineWorkspace() {
   const fragmentPreviewTime = ref(0)
   const fragmentPreviewSegmentIndex = ref(0)
   const instagramForm = ref<InstagramPublishForm>({
+    accountId: '',
     tunnelUrl: '',
     caption: '',
     shareToFeed: true,
@@ -589,11 +593,12 @@ export function usePipelineWorkspace() {
     }
   }
 
-  function openInstagramDialog(video: RenderedVideo) {
+  async function openInstagramDialog(video: RenderedVideo) {
     instagramVideo.value = video
     instagramMessage.value = ''
     instagramForm.value = {
-      tunnelUrl: "https://" + window.location.hostname,
+      accountId: '',
+      tunnelUrl: `https://${window.location.hostname}`,
       caption: defaultInstagramCaption,
       shareToFeed: true,
       collaborators: '',
@@ -601,6 +606,20 @@ export function usePipelineWorkspace() {
       audioName: '',
       locationId: '',
       thumbOffset: '',
+    }
+    instagramAccountsLoading.value = true
+    try {
+      instagramAccounts.value = await readData<InstagramAccount[]>(
+        await fetch('/api/instagram-accounts'),
+      )
+      instagramForm.value.accountId = instagramAccounts.value[0]?.id ?? ''
+    } catch (cause) {
+      error.value =
+        cause instanceof Error
+          ? cause.message
+          : 'Не удалось загрузить Instagram-аккаунты'
+    } finally {
+      instagramAccountsLoading.value = false
     }
   }
 
@@ -621,6 +640,10 @@ export function usePipelineWorkspace() {
   async function publishToInstagram() {
     const video = instagramVideo.value
     if (!video) return
+    if (!instagramForm.value.accountId) {
+      error.value = 'Выберите Instagram-аккаунт.'
+      return
+    }
     instagramBusy.value = true
     instagramMessage.value = 'Instagram скачивает и обрабатывает видео…'
     error.value = ''
@@ -630,6 +653,7 @@ export function usePipelineWorkspace() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          accountId: instagramForm.value.accountId,
           videoUrl: publicVideoURL(video),
           caption: instagramForm.value.caption,
           shareToFeed: instagramForm.value.shareToFeed,
@@ -652,7 +676,9 @@ export function usePipelineWorkspace() {
       ) {
         await wait(5000)
         status = await readData<InstagramContainer>(
-          await fetch(`/api/videos/${video.id}/instagram/${container.id}`),
+          await fetch(
+            `/api/videos/${video.id}/instagram/${container.id}?accountId=${encodeURIComponent(instagramForm.value.accountId)}`,
+          ),
         )
       }
       if (status.status !== 'FINISHED') {
@@ -665,7 +691,7 @@ export function usePipelineWorkspace() {
       }
       await readData<{ id: string }>(
         await fetch(
-          `/api/videos/${video.id}/instagram/${container.id}/publish`,
+          `/api/videos/${video.id}/instagram/${container.id}/publish?accountId=${encodeURIComponent(instagramForm.value.accountId)}`,
           {
             method: 'POST',
           },
@@ -710,6 +736,8 @@ export function usePipelineWorkspace() {
     fragmentSourceURL,
     fragmentVideo,
     instagramBusy,
+    instagramAccounts,
+    instagramAccountsLoading,
     instagramForm,
     instagramMessage,
     instagramVideo,

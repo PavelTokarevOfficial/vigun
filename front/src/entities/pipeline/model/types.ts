@@ -63,6 +63,7 @@ export type InstagramContainer = {
 }
 
 export type InstagramPublishForm = {
+  accountId: string
   tunnelUrl: string
   caption: string
   shareToFeed: boolean

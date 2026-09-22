@@ -27,6 +27,10 @@ export default createRouter({
     { path: '/pipeline', component: () => import('../pages/PipelinePage.vue') },
     { path: '/assets', component: () => import('../pages/AssetsPage.vue') },
     {
+      path: '/accounts',
+      component: () => import('../pages/AccountManagerPage.vue'),
+    },
+    {
       path: '/templates',
       component: () => import('../pages/TemplatesPage.vue'),
     },

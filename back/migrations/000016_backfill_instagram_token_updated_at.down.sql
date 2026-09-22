@@ -1,0 +1,1 @@
+-- The previous token update timestamp cannot be reconstructed after backfill.
