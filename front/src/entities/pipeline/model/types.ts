@@ -43,6 +43,7 @@ export type ProcessingJob = {
   templateName: string
   isTrain: boolean
   fragmentCount: number
+  fragmentClipIds: string[]
   createdAt: string
 }
 

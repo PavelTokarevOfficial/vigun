@@ -10,6 +10,7 @@ import {
   Scissors,
   Send,
   Trash,
+  X,
 } from '@lucide/vue'
 import AppButton from '@/shared/ui/AppButton.vue'
 import type { PipelineWorkspaceModel } from '../model/usePipelineWorkspace'
@@ -31,11 +32,21 @@ const {
   removeRenderedVideo,
   selectedTrainClipIDs,
   statusText,
+  startTrain,
   toggleTrainClip,
+  renderJobs,
+  renderJobStatus,
+  renderJobStatusClass,
   trainSelectionMode,
+  usedFragmentIDs,
   updateFragment,
   videos,
 } = props.workspace
+
+function toggleTrainSelection() {
+  trainSelectionMode.value = !trainSelectionMode.value
+  selectedTrainClipIDs.value = new Set()
+}
 </script>
 
 <template>
@@ -121,9 +132,32 @@ const {
     </section>
 
     <section class="xl:border-l xl:border-dashed xl:border-slate-300 xl:pl-4">
-      <h3 class="font-semibold">
-        Готовые фрагменты · {{ readyFragments.length }}
-      </h3>
+      <div class="flex items-center justify-between gap-2">
+        <h3 class="font-semibold">
+          Фрагменты · {{ readyFragments.length }}
+        </h3>
+        <div class="flex items-center gap-2">
+          <button
+            v-if="trainSelectionMode && selectedTrainClipIDs.size >= 2"
+            type="button"
+            class="rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-violet-700"
+            @click="startTrain"
+          >
+            Собрать · {{ selectedTrainClipIDs.size }}
+          </button>
+          <button
+            type="button"
+            class="grid size-8 place-content-center rounded-lg border text-slate-700 transition hover:bg-slate-100"
+            :class="trainSelectionMode ? 'border-violet-300 bg-violet-50 text-violet-700' : 'border-slate-200 bg-white'"
+            :title="trainSelectionMode ? 'Отменить выбор' : 'Собрать несколько фрагментов'"
+            :aria-label="trainSelectionMode ? 'Отменить выбор фрагментов' : 'Собрать несколько фрагментов'"
+            @click="toggleTrainSelection"
+          >
+            <X v-if="trainSelectionMode" :size="17" />
+            <Plus v-else :size="17" />
+          </button>
+        </div>
+      </div>
       <div class="mt-3 space-y-3">
         <p v-if="!readyFragments.length" class="text-sm text-slate-500">
           Пока пусто.
@@ -132,8 +166,8 @@ const {
           v-for="clip in readyFragments"
           :key="clip.id"
           class="relative overflow-hidden rounded-xl ring-offset-2"
-          :class="selectedTrainClipIDs.has(clip.id) ? 'ring-2 ring-violet-500' : ''"
-          :tabindex="trainSelectionMode ? 0 : undefined"
+          :class="[selectedTrainClipIDs.has(clip.id) ? 'ring-2 ring-violet-500' : '']"
+          :tabindex="trainSelectionMode && !usedFragmentIDs.has(clip.id) ? 0 : undefined"
           @click="trainSelectionMode && toggleTrainClip(clip.id)"
           @keydown.enter="trainSelectionMode && toggleTrainClip(clip.id)"
         >
@@ -141,7 +175,10 @@ const {
             v-if="clip.thumbnailUrl"
             :src="clip.thumbnailUrl"
             :alt="`Превью фрагмента: ${clip.title}`"
-            class="aspect-video w-full object-cover"
+            :class="[
+              'aspect-video w-full object-cover',
+              usedFragmentIDs.has(clip.id) ? 'brightness-50' : '',
+            ]"
             draggable="false"
           >
           <div
@@ -151,7 +188,14 @@ const {
             <p>{{ clip.streamerName }}</p>
           </div>
           <span
-            v-if="trainSelectionMode"
+            v-if="usedFragmentIDs.has(clip.id)"
+            class="absolute top-3 right-3 grid size-7 place-content-center rounded-full bg-emerald-500 text-white shadow"
+            title="Фрагмент уже использован в рендере"
+          >
+            <Check :size="17" :stroke-width="3" />
+          </span>
+          <span
+            v-if="trainSelectionMode && !usedFragmentIDs.has(clip.id)"
             class="absolute left-3 bottom-3 grid size-7 place-content-center rounded-full bg-white text-violet-700"
           >
             <Check v-if="selectedTrainClipIDs.has(clip.id)" :size="17" />
@@ -171,6 +215,7 @@ const {
               <Scissors :size="16" />
             </AppButton>
             <AppButton
+              v-if="!usedFragmentIDs.has(clip.id)"
               class="grid h-8 w-8 place-content-center"
               title="Отправить на рендер"
               @click.stop="openTemplateChooser(clip.id)"
@@ -193,9 +238,51 @@ const {
     <section
       class="col-span-2 xl:border-l xl:border-dashed xl:border-slate-300 xl:pl-4"
     >
-      <h3 class="font-semibold">Готовые видео · {{ videos.length }}</h3>
+      <h3 class="font-semibold">Готовые · {{ videos.length }}</h3>
       <div class="grid grid-cols-2 gap-3 mt-3">
-        <p v-if="!videos.length" class="text-sm text-slate-500">Пока пусто.</p>
+        <p
+          v-if="!videos.length && !renderJobs.length"
+          class="text-sm text-slate-500"
+        >
+          Пока пусто.
+        </p>
+        <article
+          v-for="job in renderJobs"
+          :key="`rendering-${job.id}`"
+          class="relative overflow-hidden rounded-xl border border-violet-200 bg-violet-50"
+        >
+          <div
+            class="grid aspect-video w-full place-content-center bg-gradient-to-br from-violet-100 to-slate-200"
+          >
+            <span class="text-sm font-semibold text-violet-800">
+              <template v-if="job.isTrain">
+                Паровозик · {{ job.fragmentCount }} фрагм.
+              </template>
+              <template v-else>
+                {{ job.clipTitle || 'Видео' }}
+              </template>
+            </span>
+          </div>
+          <div class="absolute inset-x-0 top-0 p-3 text-slate-900">
+            <b>{{ job.templateName || 'Рендер видео' }}</b>
+            <p class="text-xs">{{ renderJobStatus(job) }}</p>
+          </div>
+          <div class="absolute inset-x-3 bottom-3">
+            <div class="h-1.5 overflow-hidden rounded-full bg-white/80">
+              <div
+                class="h-full rounded-full bg-violet-600 transition-all"
+                :class="renderJobStatusClass(job)"
+                :style="{ width: `${Math.max(job.status === 'pending' ? 4 : job.progress, 4)}%` }"
+              />
+            </div>
+            <p
+              v-if="job.status === 'failed' && job.error"
+              class="mt-1 line-clamp-1 text-xs text-red-700"
+            >
+              {{ job.error.split('\n')[0] }}
+            </p>
+          </div>
+        </article>
         <article
           v-for="video in videos"
           :key="video.id"

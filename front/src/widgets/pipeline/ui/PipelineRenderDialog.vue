@@ -93,8 +93,14 @@ const {
           v-if="!availableTemplates.length"
           class="rounded-xl border border-dashed border-slate-300 bg-white p-5 text-sm text-slate-600 sm:col-span-2"
         >
-          Нет шаблонов для «Паровозика». Откройте редактор шаблона, включите
-          галочку «Паровозик» и сохраните шаблон.
+          <template v-if="processClipIDs.length > 1">
+            Нет шаблонов для «Паровозика». Откройте редактор шаблона, включите
+            галочку «Паровозик» и сохраните шаблон.
+          </template>
+          <template v-else>
+            Нет обычных шаблонов. Откройте редактор шаблона, выключите галочку
+            «Паровозик» и сохраните шаблон.
+          </template>
         </div>
         <button
           v-for="template in availableTemplates"
@@ -114,6 +120,7 @@ const {
             :src="template.previewUrl"
             :alt="`Превью шаблона ${template.name}`"
             class="aspect-video w-full object-cover"
+            draggable="false"
           >
           <div
             v-else

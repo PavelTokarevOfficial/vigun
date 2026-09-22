@@ -30,17 +30,25 @@ export function usePipelineBoard() {
   const readyFragments = computed(() =>
     clips.value.filter((clip) => clip.isReadyFragment && clip.hasSource),
   )
-  const trainJobs = computed(() =>
+  const renderJobs = computed(() =>
     jobs.value
-      .filter(
-        (job) =>
-          job.type === 'process' &&
-          job.isTrain &&
-          (job.status !== 'completed' ||
-            videos.value.some((video) => video.processingJobId === job.id)),
-      )
+      .filter((job) => job.type === 'process' && job.status !== 'completed')
       .slice(0, 6),
   )
+  const usedFragmentIDs = computed(() => {
+    const ids = new Set<string>()
+    for (const job of jobs.value) {
+      const hasRenderedVideo = videos.value.some(
+        (video) => video.processingJobId === job.id,
+      )
+      const reservesFragments =
+        ['pending', 'running'].includes(job.status) ||
+        (job.status === 'completed' && hasRenderedVideo)
+      if (job.type !== 'process' || !reservesFragments) continue
+      for (const id of job.fragmentClipIds || []) ids.add(id)
+    }
+    return ids
+  })
 
   async function load() {
     try {
@@ -179,22 +187,18 @@ export function usePipelineBoard() {
     return `${clip.currentStep || clip.status} · ${clip.progress}%`
   }
 
-  function trainJobStatus(job: ProcessingJob) {
+  function renderJobStatus(job: ProcessingJob) {
     if (job.status === 'pending') return 'В очереди'
     if (job.status === 'running') return `Рендерится · ${job.progress}%`
     if (job.status === 'completed') return 'Готово'
     return 'Ошибка'
   }
 
-  function trainJobStatusClass(job: ProcessingJob) {
+  function renderJobStatusClass(job: ProcessingJob) {
     if (job.status === 'completed') return 'bg-emerald-100 text-emerald-700'
     if (job.status === 'failed') return 'bg-red-100 text-red-700'
     if (job.status === 'running') return 'bg-violet-100 text-violet-700'
     return 'bg-amber-100 text-amber-700'
-  }
-
-  function videoForJob(job: ProcessingJob) {
-    return videos.value.find((video) => video.processingJobId === job.id)
   }
 
   return {
@@ -205,7 +209,8 @@ export function usePipelineBoard() {
     busy,
     downloaded,
     readyFragments,
-    trainJobs,
+    renderJobs,
+    usedFragmentIDs,
     load,
     action,
     updateFragment,
@@ -214,8 +219,7 @@ export function usePipelineBoard() {
     isProcessQueued,
     canDelete,
     statusText,
-    trainJobStatus,
-    trainJobStatusClass,
-    videoForJob,
+    renderJobStatus,
+    renderJobStatusClass,
   }
 }

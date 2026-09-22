@@ -2,8 +2,10 @@ package processing
 
 import (
 	"context"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"encoding/json"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type ClaimedJob struct {
@@ -13,21 +15,22 @@ type ClaimedJob struct {
 type Jobs struct{ db *pgxpool.Pool }
 
 type Info struct {
-	ID            string     `json:"id"`
-	ClipID        string     `json:"clipId"`
-	ClipTitle     string     `json:"clipTitle"`
-	Type          string     `json:"type"`
-	Status        string     `json:"status"`
-	CurrentStep   string     `json:"currentStep"`
-	Error         string     `json:"error"`
-	Progress      int        `json:"progress"`
-	Attempts      int        `json:"attempts"`
-	TemplateName  string     `json:"templateName"`
-	IsTrain       bool       `json:"isTrain"`
-	FragmentCount int        `json:"fragmentCount"`
-	CreatedAt     time.Time  `json:"createdAt"`
-	StartedAt     *time.Time `json:"startedAt"`
-	FinishedAt    *time.Time `json:"finishedAt"`
+	ID              string     `json:"id"`
+	ClipID          string     `json:"clipId"`
+	ClipTitle       string     `json:"clipTitle"`
+	Type            string     `json:"type"`
+	Status          string     `json:"status"`
+	CurrentStep     string     `json:"currentStep"`
+	Error           string     `json:"error"`
+	Progress        int        `json:"progress"`
+	Attempts        int        `json:"attempts"`
+	TemplateName    string     `json:"templateName"`
+	IsTrain         bool       `json:"isTrain"`
+	FragmentCount   int        `json:"fragmentCount"`
+	FragmentClipIDs []string   `json:"fragmentClipIds"`
+	CreatedAt       time.Time  `json:"createdAt"`
+	StartedAt       *time.Time `json:"startedAt"`
+	FinishedAt      *time.Time `json:"finishedAt"`
 }
 
 func NewJobs(db *pgxpool.Pool) *Jobs { return &Jobs{db} }
@@ -36,10 +39,12 @@ func (j *Jobs) List(ctx context.Context) ([]Info, error) {
 		COALESCE(j.template_snapshot->>'templateName',''),
 		COALESCE(train.secondary_clip_count,0) > 0,
 		CASE WHEN COALESCE(train.secondary_clip_count,0) > 0 THEN 1 + train.secondary_clip_count ELSE 0 END,
+		jsonb_build_array(j.clip_id) || COALESCE(train.secondary_clip_ids,'[]'::jsonb),
 		j.created_at,j.started_at,j.finished_at
 		FROM processing_jobs j JOIN clips c ON c.id=j.clip_id
 		LEFT JOIN LATERAL (
-			SELECT COUNT(DISTINCT segment->>'assetId') AS secondary_clip_count
+			SELECT COUNT(DISTINCT segment->>'assetId') AS secondary_clip_count,
+				COALESCE(jsonb_agg(DISTINCT replace(segment->>'assetId','clip-source:','')),'[]'::jsonb) AS secondary_clip_ids
 			FROM jsonb_array_elements(COALESCE(j.template_snapshot #> '{config,timeline,segments}','[]'::jsonb)) segment
 			WHERE segment->>'assetId' LIKE 'clip-source:%'
 		) train ON true
@@ -51,7 +56,11 @@ func (j *Jobs) List(ctx context.Context) ([]Info, error) {
 	out := []Info{}
 	for rows.Next() {
 		var x Info
-		if err = rows.Scan(&x.ID, &x.ClipID, &x.ClipTitle, &x.Type, &x.Status, &x.CurrentStep, &x.Progress, &x.Attempts, &x.Error, &x.TemplateName, &x.IsTrain, &x.FragmentCount, &x.CreatedAt, &x.StartedAt, &x.FinishedAt); err != nil {
+		var fragmentClipIDs []byte
+		if err = rows.Scan(&x.ID, &x.ClipID, &x.ClipTitle, &x.Type, &x.Status, &x.CurrentStep, &x.Progress, &x.Attempts, &x.Error, &x.TemplateName, &x.IsTrain, &x.FragmentCount, &fragmentClipIDs, &x.CreatedAt, &x.StartedAt, &x.FinishedAt); err != nil {
+			return nil, err
+		}
+		if err = json.Unmarshal(fragmentClipIDs, &x.FragmentClipIDs); err != nil {
 			return nil, err
 		}
 		out = append(out, x)
@@ -60,18 +69,24 @@ func (j *Jobs) List(ctx context.Context) ([]Info, error) {
 }
 func (j *Jobs) Get(ctx context.Context, id string) (Info, error) {
 	var x Info
+	var fragmentClipIDs []byte
 	err := j.db.QueryRow(ctx, `SELECT j.id,j.clip_id,c.title,j.type,j.status,COALESCE(j.current_step,''),j.progress,j.attempts,COALESCE(j.error,''),
 		COALESCE(j.template_snapshot->>'templateName',''),
 		COALESCE(train.secondary_clip_count,0) > 0,
 		CASE WHEN COALESCE(train.secondary_clip_count,0) > 0 THEN 1 + train.secondary_clip_count ELSE 0 END,
+		jsonb_build_array(j.clip_id) || COALESCE(train.secondary_clip_ids,'[]'::jsonb),
 		j.created_at,j.started_at,j.finished_at
 		FROM processing_jobs j JOIN clips c ON c.id=j.clip_id
 		LEFT JOIN LATERAL (
-			SELECT COUNT(DISTINCT segment->>'assetId') AS secondary_clip_count
+			SELECT COUNT(DISTINCT segment->>'assetId') AS secondary_clip_count,
+				COALESCE(jsonb_agg(DISTINCT replace(segment->>'assetId','clip-source:','')),'[]'::jsonb) AS secondary_clip_ids
 			FROM jsonb_array_elements(COALESCE(j.template_snapshot #> '{config,timeline,segments}','[]'::jsonb)) segment
 			WHERE segment->>'assetId' LIKE 'clip-source:%'
 		) train ON true
-		WHERE j.id=$1`, id).Scan(&x.ID, &x.ClipID, &x.ClipTitle, &x.Type, &x.Status, &x.CurrentStep, &x.Progress, &x.Attempts, &x.Error, &x.TemplateName, &x.IsTrain, &x.FragmentCount, &x.CreatedAt, &x.StartedAt, &x.FinishedAt)
+		WHERE j.id=$1`, id).Scan(&x.ID, &x.ClipID, &x.ClipTitle, &x.Type, &x.Status, &x.CurrentStep, &x.Progress, &x.Attempts, &x.Error, &x.TemplateName, &x.IsTrain, &x.FragmentCount, &fragmentClipIDs, &x.CreatedAt, &x.StartedAt, &x.FinishedAt)
+	if err == nil {
+		err = json.Unmarshal(fragmentClipIDs, &x.FragmentClipIDs)
+	}
 	return x, err
 }
 func (j *Jobs) Claim(ctx context.Context) (ClaimedJob, error) {

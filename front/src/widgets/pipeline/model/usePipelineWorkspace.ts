@@ -9,7 +9,6 @@ import type {
   InstagramPublishForm,
   PipelineClip,
   PipelineVideoPreview,
-  ProcessingJob,
   RenderedVideo,
 } from '@/entities/pipeline/model/types'
 import {
@@ -44,11 +43,11 @@ export function usePipelineWorkspace() {
     removeClip: remove,
     removeRenderedVideo,
     statusText,
-    trainJobs,
-    trainJobStatus,
-    trainJobStatusClass,
+    renderJobs,
+    renderJobStatus,
+    renderJobStatusClass,
+    usedFragmentIDs,
     updateFragment,
-    videoForJob,
     videos,
   } = usePipelineBoard()
   const processClipID = ref<string | null>(null)
@@ -91,7 +90,7 @@ export function usePipelineWorkspace() {
   const availableTemplates = computed(() =>
     processClipIDs.value.length > 1
       ? templates.value.filter((template) => template.config.train?.enabled)
-      : templates.value,
+      : templates.value.filter((template) => !template.config.train?.enabled),
   )
   const processClip = computed(
     () => clips.value.find((clip) => clip.id === processClipID.value) ?? null,
@@ -348,7 +347,11 @@ export function usePipelineWorkspace() {
       return
     }
     await action(id, 'process', template.id, renderEditor.draft.value)
-    if (!error.value) closeProcessDialog()
+    if (!error.value) {
+      selectedTrainClipIDs.value = new Set()
+      trainSelectionMode.value = false
+      closeProcessDialog()
+    }
   }
 
   function closeProcessDialog() {
@@ -508,6 +511,7 @@ export function usePipelineWorkspace() {
   }
 
   function toggleTrainClip(id: string) {
+    if (usedFragmentIDs.value.has(id)) return
     const next = new Set(selectedTrainClipIDs.value)
     if (next.has(id)) next.delete(id)
     else next.add(id)
@@ -515,7 +519,9 @@ export function usePipelineWorkspace() {
   }
 
   function startTrain() {
-    const ids = [...selectedTrainClipIDs.value]
+    const ids = [...selectedTrainClipIDs.value].filter(
+      (id) => !usedFragmentIDs.value.has(id),
+    )
     if (ids.length < 2) {
       error.value = 'Выберите минимум два готовых фрагмента.'
       return
@@ -675,11 +681,6 @@ export function usePipelineWorkspace() {
     }
   }
 
-  function openTrainJobVideo(job: ProcessingJob) {
-    const video = videoForJob(job)
-    if (video) openRenderedVideo(video)
-  }
-
   let timer: number | undefined
   onMounted(() => {
     void load()
@@ -718,7 +719,6 @@ export function usePipelineWorkspace() {
     openInstagramDialog,
     openRenderedVideo,
     openTemplateChooser,
-    openTrainJobVideo,
     previewVideo,
     processClip,
     processClipID,
@@ -743,15 +743,15 @@ export function usePipelineWorkspace() {
     templatesLoading,
     timelineTime,
     toggleTrainClip,
-    trainJobs,
-    trainJobStatus,
-    trainJobStatusClass,
+    renderJobs,
+    renderJobStatus,
+    renderJobStatusClass,
     trainSelectionMode,
+    usedFragmentIDs,
     updateEditorLayerTrack,
     updateFragment,
     updateFragmentPreview,
     updateFragmentSegments,
-    videoForJob,
     videos,
     setFragmentTimelineTime,
     selectEditorLayer,
