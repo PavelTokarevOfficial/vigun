@@ -1,0 +1,132 @@
+package processing
+
+import (
+	"context"
+	"encoding/json"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+type ClaimedJob struct {
+	ID, ClipID, Type, ClipURL string
+	TemplateSnapshot          []byte
+}
+type Jobs struct{ db *pgxpool.Pool }
+
+type Info struct {
+	ID              string     `json:"id"`
+	ClipID          string     `json:"clipId"`
+	ClipTitle       string     `json:"clipTitle"`
+	Type            string     `json:"type"`
+	Status          string     `json:"status"`
+	CurrentStep     string     `json:"currentStep"`
+	Error           string     `json:"error"`
+	Progress        int        `json:"progress"`
+	Attempts        int        `json:"attempts"`
+	TemplateName    string     `json:"templateName"`
+	IsTrain         bool       `json:"isTrain"`
+	FragmentCount   int        `json:"fragmentCount"`
+	FragmentClipIDs []string   `json:"fragmentClipIds"`
+	CreatedAt       time.Time  `json:"createdAt"`
+	StartedAt       *time.Time `json:"startedAt"`
+	FinishedAt      *time.Time `json:"finishedAt"`
+}
+
+func NewJobs(db *pgxpool.Pool) *Jobs { return &Jobs{db} }
+func (j *Jobs) List(ctx context.Context) ([]Info, error) {
+	rows, err := j.db.Query(ctx, `SELECT j.id,j.clip_id,c.title,j.type,j.status,COALESCE(j.current_step,''),j.progress,j.attempts,COALESCE(j.error,''),
+		COALESCE(j.template_snapshot->>'templateName',''),
+		COALESCE(train.secondary_clip_count,0) > 0,
+		CASE WHEN COALESCE(train.secondary_clip_count,0) > 0 THEN 1 + train.secondary_clip_count ELSE 0 END,
+		jsonb_build_array(j.clip_id) || COALESCE(train.secondary_clip_ids,'[]'::jsonb),
+		j.created_at,j.started_at,j.finished_at
+		FROM processing_jobs j JOIN clips c ON c.id=j.clip_id
+		LEFT JOIN LATERAL (
+			SELECT COUNT(DISTINCT segment->>'assetId') AS secondary_clip_count,
+				COALESCE(jsonb_agg(DISTINCT replace(segment->>'assetId','clip-source:','')),'[]'::jsonb) AS secondary_clip_ids
+			FROM jsonb_array_elements(COALESCE(j.template_snapshot #> '{config,timeline,segments}','[]'::jsonb)) segment
+			WHERE segment->>'assetId' LIKE 'clip-source:%'
+		) train ON true
+		ORDER BY j.created_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Info{}
+	for rows.Next() {
+		var x Info
+		var fragmentClipIDs []byte
+		if err = rows.Scan(&x.ID, &x.ClipID, &x.ClipTitle, &x.Type, &x.Status, &x.CurrentStep, &x.Progress, &x.Attempts, &x.Error, &x.TemplateName, &x.IsTrain, &x.FragmentCount, &fragmentClipIDs, &x.CreatedAt, &x.StartedAt, &x.FinishedAt); err != nil {
+			return nil, err
+		}
+		if err = json.Unmarshal(fragmentClipIDs, &x.FragmentClipIDs); err != nil {
+			return nil, err
+		}
+		out = append(out, x)
+	}
+	return out, rows.Err()
+}
+func (j *Jobs) Get(ctx context.Context, id string) (Info, error) {
+	var x Info
+	var fragmentClipIDs []byte
+	err := j.db.QueryRow(ctx, `SELECT j.id,j.clip_id,c.title,j.type,j.status,COALESCE(j.current_step,''),j.progress,j.attempts,COALESCE(j.error,''),
+		COALESCE(j.template_snapshot->>'templateName',''),
+		COALESCE(train.secondary_clip_count,0) > 0,
+		CASE WHEN COALESCE(train.secondary_clip_count,0) > 0 THEN 1 + train.secondary_clip_count ELSE 0 END,
+		jsonb_build_array(j.clip_id) || COALESCE(train.secondary_clip_ids,'[]'::jsonb),
+		j.created_at,j.started_at,j.finished_at
+		FROM processing_jobs j JOIN clips c ON c.id=j.clip_id
+		LEFT JOIN LATERAL (
+			SELECT COUNT(DISTINCT segment->>'assetId') AS secondary_clip_count,
+				COALESCE(jsonb_agg(DISTINCT replace(segment->>'assetId','clip-source:','')),'[]'::jsonb) AS secondary_clip_ids
+			FROM jsonb_array_elements(COALESCE(j.template_snapshot #> '{config,timeline,segments}','[]'::jsonb)) segment
+			WHERE segment->>'assetId' LIKE 'clip-source:%'
+		) train ON true
+		WHERE j.id=$1`, id).Scan(&x.ID, &x.ClipID, &x.ClipTitle, &x.Type, &x.Status, &x.CurrentStep, &x.Progress, &x.Attempts, &x.Error, &x.TemplateName, &x.IsTrain, &x.FragmentCount, &fragmentClipIDs, &x.CreatedAt, &x.StartedAt, &x.FinishedAt)
+	if err == nil {
+		err = json.Unmarshal(fragmentClipIDs, &x.FragmentClipIDs)
+	}
+	return x, err
+}
+func (j *Jobs) Claim(ctx context.Context) (ClaimedJob, error) {
+	var x ClaimedJob
+	e := j.db.QueryRow(ctx, `WITH next AS (SELECT id,clip_id FROM processing_jobs WHERE status='pending' ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1)
+		UPDATE processing_jobs j SET status='running',attempts=attempts+1,started_at=now(),updated_at=now()
+		FROM next JOIN clips c ON c.id=next.clip_id
+		WHERE j.id=next.id
+		RETURNING j.id,j.clip_id,j.type,c.twitch_url,j.template_snapshot`).Scan(&x.ID, &x.ClipID, &x.Type, &x.ClipURL, &x.TemplateSnapshot)
+	return x, e
+}
+func (j *Jobs) Step(ctx context.Context, id, clipID, step, status string, progress int) error {
+	_, e := j.db.Exec(ctx, "UPDATE processing_jobs SET current_step=$2,progress=$3,updated_at=now() WHERE id=$1", id, step, progress)
+	if e != nil {
+		return e
+	}
+	_, e = j.db.Exec(ctx, "UPDATE clips SET status=$2,updated_at=now() WHERE id=$1", clipID, status)
+	return e
+}
+func (j *Jobs) Complete(ctx context.Context, id, clipID, clipStatus string) error {
+	_, e := j.db.Exec(ctx, "UPDATE processing_jobs SET status='completed',current_step='completed',progress=100,finished_at=now(),updated_at=now() WHERE id=$1", id)
+	if e != nil {
+		return e
+	}
+	_, e = j.db.Exec(ctx, "UPDATE clips SET status=$2,updated_at=now() WHERE id=$1", clipID, clipStatus)
+	return e
+}
+func (j *Jobs) Fail(ctx context.Context, id, clipID, msg string) error {
+	_, e := j.db.Exec(ctx, "UPDATE processing_jobs SET status='failed',error=$2,finished_at=now(),updated_at=now() WHERE id=$1", id, msg)
+	if e != nil {
+		return e
+	}
+	_, e = j.db.Exec(ctx, "UPDATE clips SET status='failed',error=$2,updated_at=now() WHERE id=$1", clipID, msg)
+	return e
+}
+
+// Requeue is used only during graceful worker shutdown. Artifacts already persisted by Runner remain reusable.
+func (j *Jobs) Requeue(ctx context.Context, id string) error {
+	_, err := j.db.Exec(ctx, `UPDATE processing_jobs
+		SET status='pending',current_step='interrupted',error='worker interrupted; retrying',started_at=NULL,updated_at=now()
+		WHERE id=$1 AND status='running'`, id)
+	return err
+}

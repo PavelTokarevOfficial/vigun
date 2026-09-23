@@ -1,0 +1,790 @@
+package httpapi
+
+import (
+	"encoding/json"
+	"github.com/finde-clip/finde-v2/back/infrastructure/twitch"
+	"github.com/finde-clip/finde-v2/back/internal/assets"
+	"github.com/finde-clip/finde-v2/back/internal/clip"
+	"github.com/finde-clip/finde-v2/back/internal/composition"
+	"github.com/finde-clip/finde-v2/back/internal/instagram"
+	"github.com/finde-clip/finde-v2/back/internal/media"
+	"github.com/finde-clip/finde-v2/back/internal/processing"
+	"github.com/finde-clip/finde-v2/back/internal/streamer"
+	"github.com/finde-clip/finde-v2/back/internal/subscription"
+	"github.com/finde-clip/finde-v2/back/internal/videotemplate"
+	"github.com/go-chi/chi/v5"
+	"io"
+	"log/slog"
+	"mime"
+	"net/http"
+	"strconv"
+	"time"
+)
+
+type API struct {
+	streamers *streamer.Service
+	clips     *clip.Service
+	subs      *subscription.Service
+	assets    *assets.Service
+	templates *videotemplate.Service
+	library   *media.Library
+	videos    *media.Videos
+	jobs      *processing.Jobs
+	instagram *instagram.Service
+	log       *slog.Logger
+}
+
+func New(s *streamer.Service, c *clip.Service, subs *subscription.Service, assets *assets.Service, templates *videotemplate.Service, library *media.Library, v *media.Videos, j *processing.Jobs, instagram *instagram.Service, l *slog.Logger) *API {
+	return &API{streamers: s, clips: c, subs: subs, assets: assets, templates: templates, library: library, videos: v, jobs: j, instagram: instagram, log: l}
+}
+func (a *API) Router() http.Handler {
+	r := chi.NewRouter()
+	r.Get("/health", func(w http.ResponseWriter, r *http.Request) { write(w, 200, map[string]bool{"ok": true}) })
+	r.Route("/api/streamers", func(r chi.Router) {
+		r.Get("/", a.list)
+		r.Post("/", a.create)
+		r.Post("/bulk", a.createMany)
+		r.Put("/{id}", a.update)
+		r.Patch("/{id}/priority", a.adjustPriority)
+		r.Patch("/{id}/subscription", a.adjustSubscription)
+		r.Delete("/{id}", a.delete)
+	})
+	r.Get("/api/streamers/{id}/clips", a.remoteClips)
+	r.Get("/api/subscriptions", a.listSubscriptions)
+	r.Delete("/api/subscriptions/clips", a.clearSubscriptionClips)
+	r.Post("/api/subscriptions/{id}/sync", a.syncSubscription)
+	r.Patch("/api/subscriptions/clips/{id}/viewed", a.markSubscriptionClipViewed)
+	r.Route("/api/assets", func(r chi.Router) {
+		r.Get("/", a.listAssets)
+		r.Post("/", a.uploadAsset)
+		r.Patch("/{id}", a.updateAsset)
+		r.Delete("/{id}", a.deleteAsset)
+	})
+	r.Route("/api/asset-folders", func(r chi.Router) {
+		r.Post("/", a.createFolder)
+		r.Patch("/{id}", a.updateFolder)
+		r.Delete("/{id}", a.deleteFolder)
+	})
+	r.Route("/api/templates", func(r chi.Router) {
+		r.Get("/", a.listTemplates)
+		r.Post("/", a.createTemplate)
+		r.Get("/{id}", a.getTemplate)
+		r.Put("/{id}", a.updateTemplate)
+		r.Put("/{id}/default", a.setDefaultTemplate)
+		r.Post("/{id}/duplicate", a.duplicateTemplate)
+		r.Delete("/{id}", a.deleteTemplate)
+	})
+	r.Route("/api/instagram-accounts", func(r chi.Router) {
+		r.Get("/", a.listInstagramAccounts)
+		r.Post("/", a.createInstagramAccount)
+		r.Put("/{id}", a.updateInstagramAccount)
+		r.Delete("/{id}", a.deleteInstagramAccount)
+		r.Post("/{id}/exchange-token", a.exchangeInstagramToken)
+		r.Post("/{id}/refresh-token", a.refreshInstagramToken)
+		r.Post("/{id}/check-token", a.checkInstagramToken)
+	})
+	r.Post("/api/clips/import", a.importClip)
+	r.Get("/api/clips", a.localClips)
+	r.Get("/api/clips/{id}/source", a.clipSource)
+	r.Delete("/api/clips/{id}", a.deleteClip)
+	r.Post("/api/clips/{id}/download", a.download)
+	r.Post("/api/clips/{id}/process", a.process)
+	r.Put("/api/clips/{id}/fragment", a.updateFragment)
+	r.Post("/api/clips/{id}/retry", a.retry)
+	r.Get("/api/jobs", a.listJobs)
+	r.Get("/api/jobs/{id}", a.getJob)
+	r.Get("/api/videos", a.readyVideos)
+	r.Get("/api/videos/{id}/download", a.downloadVideo)
+	r.Get("/api/videos/{id}/content", a.streamVideo)
+	r.Post("/api/videos/{id}/instagram", a.createInstagramContainer)
+	r.Get("/api/videos/{id}/instagram/{containerID}", a.instagramContainerStatus)
+	r.Post("/api/videos/{id}/instagram/{containerID}/publish", a.publishInstagramContainer)
+	r.Delete("/api/videos/{id}", a.deleteVideo)
+	return r
+}
+func (a *API) listJobs(w http.ResponseWriter, r *http.Request) {
+	x, e := a.jobs.List(r.Context())
+	if e != nil {
+		fail(w, 500, e)
+		return
+	}
+	write(w, 200, map[string]any{"data": x})
+}
+func (a *API) getJob(w http.ResponseWriter, r *http.Request) {
+	x, e := a.jobs.Get(r.Context(), chi.URLParam(r, "id"))
+	if e != nil {
+		fail(w, 404, errText("job not found"))
+		return
+	}
+	write(w, 200, map[string]any{"data": x})
+}
+func (a *API) readyVideos(w http.ResponseWriter, r *http.Request) {
+	x, e := a.videos.List(r.Context())
+	if e != nil {
+		fail(w, 500, e)
+		return
+	}
+	write(w, 200, map[string]any{"data": x})
+}
+func (a *API) downloadVideo(w http.ResponseWriter, r *http.Request) {
+	a.sendVideo(w, r, true)
+}
+func (a *API) streamVideo(w http.ResponseWriter, r *http.Request) {
+	a.sendVideo(w, r, false)
+}
+func (a *API) sendVideo(w http.ResponseWriter, r *http.Request, attachment bool) {
+	object, filename, e := a.videos.Download(r.Context(), chi.URLParam(r, "id"))
+	if e != nil {
+		fail(w, 404, e)
+		return
+	}
+	defer object.Body.Close()
+
+	contentType := object.ContentType
+	if contentType == "" {
+		contentType = "video/mp4"
+	}
+	w.Header().Set("Content-Type", contentType)
+	disposition := "inline"
+	if attachment {
+		disposition = "attachment"
+	}
+	w.Header().Set("Content-Disposition", mime.FormatMediaType(disposition, map[string]string{"filename": filename}))
+	if object.Size >= 0 {
+		w.Header().Set("Content-Length", strconv.FormatInt(object.Size, 10))
+	}
+	if _, e = io.Copy(w, object.Body); e != nil {
+		a.log.Error("stream rendered video", "video_id", chi.URLParam(r, "id"), "error", e)
+	}
+}
+
+type instagramCreateRequest struct {
+	AccountID     string   `json:"accountId"`
+	VideoURL      string   `json:"videoUrl"`
+	Caption       string   `json:"caption"`
+	ShareToFeed   bool     `json:"shareToFeed"`
+	Collaborators []string `json:"collaborators"`
+	CoverURL      string   `json:"coverUrl"`
+	AudioName     string   `json:"audioName"`
+	LocationID    string   `json:"locationId"`
+	ThumbOffset   *int     `json:"thumbOffset"`
+}
+
+func (a *API) createInstagramContainer(w http.ResponseWriter, r *http.Request) {
+	exists, err := a.videos.Exists(r.Context(), chi.URLParam(r, "id"))
+	if err != nil || !exists {
+		fail(w, 404, errText("rendered video not found"))
+		return
+	}
+	var input instagramCreateRequest
+	if err = json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&input); err != nil {
+		fail(w, 400, errText("invalid Instagram settings"))
+		return
+	}
+	container, err := a.instagram.Create(r.Context(), input.AccountID, instagram.CreateInput{
+		VideoURL: input.VideoURL, Caption: input.Caption, ShareToFeed: input.ShareToFeed,
+		Collaborators: input.Collaborators, CoverURL: input.CoverURL, AudioName: input.AudioName,
+		LocationID: input.LocationID, ThumbOffset: input.ThumbOffset,
+	})
+	if err != nil {
+		fail(w, 422, err)
+		return
+	}
+	write(w, http.StatusCreated, map[string]any{"data": container})
+}
+
+func (a *API) instagramContainerStatus(w http.ResponseWriter, r *http.Request) {
+	container, err := a.instagram.Status(r.Context(), r.URL.Query().Get("accountId"), chi.URLParam(r, "containerID"))
+	if err != nil {
+		fail(w, 422, err)
+		return
+	}
+	write(w, 200, map[string]any{"data": container})
+}
+
+func (a *API) publishInstagramContainer(w http.ResponseWriter, r *http.Request) {
+	media, err := a.instagram.Publish(r.Context(), r.URL.Query().Get("accountId"), chi.URLParam(r, "containerID"))
+	if err != nil {
+		fail(w, 422, err)
+		return
+	}
+	write(w, 201, map[string]any{"data": media})
+}
+
+func (a *API) listInstagramAccounts(w http.ResponseWriter, r *http.Request) {
+	items, err := a.instagram.Accounts(r.Context())
+	if err != nil {
+		fail(w, 500, err)
+		return
+	}
+	write(w, 200, map[string]any{"data": items})
+}
+
+func (a *API) createInstagramAccount(w http.ResponseWriter, r *http.Request) {
+	var input instagram.AccountInput
+	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&input) != nil {
+		fail(w, 400, errText("invalid Instagram account"))
+		return
+	}
+	item, err := a.instagram.CreateAccount(r.Context(), input)
+	if err != nil {
+		fail(w, 422, err)
+		return
+	}
+	write(w, 201, map[string]any{"data": item})
+}
+
+func (a *API) updateInstagramAccount(w http.ResponseWriter, r *http.Request) {
+	var input instagram.AccountInput
+	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&input) != nil {
+		fail(w, 400, errText("invalid Instagram account"))
+		return
+	}
+	item, err := a.instagram.UpdateAccount(r.Context(), chi.URLParam(r, "id"), input)
+	if err != nil {
+		fail(w, 422, err)
+		return
+	}
+	write(w, 200, map[string]any{"data": item})
+}
+
+func (a *API) deleteInstagramAccount(w http.ResponseWriter, r *http.Request) {
+	if err := a.instagram.DeleteAccount(r.Context(), chi.URLParam(r, "id")); err != nil {
+		fail(w, 422, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *API) exchangeInstagramToken(w http.ResponseWriter, r *http.Request) {
+	item, err := a.instagram.ExchangeToken(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		fail(w, 422, err)
+		return
+	}
+	write(w, 200, map[string]any{"data": item})
+}
+
+func (a *API) refreshInstagramToken(w http.ResponseWriter, r *http.Request) {
+	item, err := a.instagram.RefreshToken(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		fail(w, 422, err)
+		return
+	}
+	write(w, 200, map[string]any{"data": item})
+}
+
+func (a *API) checkInstagramToken(w http.ResponseWriter, r *http.Request) {
+	item, err := a.instagram.CheckToken(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		fail(w, 422, err)
+		return
+	}
+	write(w, 200, map[string]any{"data": item})
+}
+func (a *API) deleteVideo(w http.ResponseWriter, r *http.Request) {
+	if e := a.videos.Delete(r.Context(), chi.URLParam(r, "id")); e != nil {
+		fail(w, 422, e)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+func (a *API) clipSource(w http.ResponseWriter, r *http.Request) {
+	url, e := a.library.SourceURL(r.Context(), chi.URLParam(r, "id"))
+	if e != nil {
+		fail(w, 404, e)
+		return
+	}
+	write(w, 200, map[string]any{"data": map[string]string{"url": url}})
+}
+func (a *API) remoteClips(w http.ResponseWriter, r *http.Request) {
+	startedAt, endedAt, e := clipWindow(r)
+	if e != nil {
+		fail(w, 400, e)
+		return
+	}
+	x, e := a.clips.Remote(r.Context(), chi.URLParam(r, "id"), startedAt, endedAt)
+	if e != nil {
+		fail(w, 422, e)
+		return
+	}
+	write(w, 200, map[string]any{"data": x})
+}
+func clipWindow(r *http.Request) (time.Time, time.Time, error) {
+	startedRaw := r.URL.Query().Get("startedAt")
+	endedRaw := r.URL.Query().Get("endedAt")
+	if startedRaw == "" && endedRaw == "" {
+		now := time.Now().UTC()
+		return now.AddDate(0, 0, -7), now, nil
+	}
+	return parseClipWindow(startedRaw, endedRaw)
+}
+
+func parseClipWindow(startedRaw, endedRaw string) (time.Time, time.Time, error) {
+	const dateLayout = "2006-01-02"
+	now := time.Now().UTC()
+	if startedRaw == "" || endedRaw == "" {
+		return time.Time{}, time.Time{}, errText("startedAt and endedAt are required together")
+	}
+	startedAt, err := time.Parse(dateLayout, startedRaw)
+	if err != nil {
+		return time.Time{}, time.Time{}, errText("startedAt must use YYYY-MM-DD")
+	}
+	endedDate, err := time.Parse(dateLayout, endedRaw)
+	if err != nil {
+		return time.Time{}, time.Time{}, errText("endedAt must use YYYY-MM-DD")
+	}
+	endedAt := endedDate.AddDate(0, 0, 1)
+	if endedAt.After(now) {
+		endedAt = now
+	}
+	if !startedAt.Before(endedAt) {
+		return time.Time{}, time.Time{}, errText("startedAt must be before endedAt")
+	}
+	return startedAt, endedAt, nil
+}
+
+type importInput struct {
+	StreamerID string      `json:"streamerId"`
+	Clip       twitch.Clip `json:"clip"`
+}
+
+func (a *API) importClip(w http.ResponseWriter, r *http.Request) {
+	var in importInput
+	if json.NewDecoder(r.Body).Decode(&in) != nil {
+		fail(w, 400, errText("invalid JSON"))
+		return
+	}
+	if in.StreamerID == "" || in.Clip.ID == "" || in.Clip.URL == "" || in.Clip.Title == "" {
+		fail(w, 400, errText("streamerId, clip.id, clip.url and clip.title are required"))
+		return
+	}
+	id, created, e := a.clips.Import(r.Context(), in.StreamerID, in.Clip)
+	if e != nil {
+		fail(w, 422, e)
+		return
+	}
+	if created {
+		if e = a.clips.EnqueueDownload(r.Context(), id); e != nil {
+			fail(w, 422, e)
+			return
+		}
+	}
+	write(w, 201, map[string]string{"id": id, "status": "downloading"})
+}
+
+type fragmentInput struct {
+	Ready    bool                  `json:"ready"`
+	Timeline *composition.Timeline `json:"timeline"`
+}
+
+func (a *API) updateFragment(w http.ResponseWriter, r *http.Request) {
+	var in fragmentInput
+	if json.NewDecoder(r.Body).Decode(&in) != nil {
+		fail(w, 400, errText("invalid JSON"))
+		return
+	}
+	if e := a.clips.UpdateFragment(r.Context(), chi.URLParam(r, "id"), in.Ready, in.Timeline); e != nil {
+		fail(w, 422, e)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+func (a *API) localClips(w http.ResponseWriter, r *http.Request) {
+	x, e := a.clips.List(r.Context())
+	if e != nil {
+		fail(w, 500, e)
+		return
+	}
+	write(w, 200, map[string]any{"data": x})
+}
+
+func (a *API) process(w http.ResponseWriter, r *http.Request) {
+	var in processInput
+	if json.NewDecoder(r.Body).Decode(&in) != nil || in.TemplateID == "" {
+		fail(w, 400, errText("templateId is required"))
+		return
+	}
+	var config *composition.Config
+	if len(in.Config) > 0 && string(in.Config) != "null" {
+		parsed, e := composition.ParseConfig(in.Config)
+		if e != nil {
+			fail(w, 400, e)
+			return
+		}
+		config = &parsed
+	}
+	if e := a.clips.EnqueueProcess(r.Context(), chi.URLParam(r, "id"), in.TemplateID, config); e != nil {
+		fail(w, 422, e)
+		return
+	}
+	write(w, 202, map[string]string{"status": "queued"})
+}
+
+type processInput struct {
+	TemplateID string          `json:"templateId"`
+	Config     json.RawMessage `json:"config"`
+}
+
+func (a *API) retry(w http.ResponseWriter, r *http.Request) {
+	if e := a.clips.Retry(r.Context(), chi.URLParam(r, "id")); e != nil {
+		fail(w, 422, e)
+		return
+	}
+	write(w, 202, map[string]string{"status": "queued"})
+}
+func (a *API) download(w http.ResponseWriter, r *http.Request) {
+	if e := a.clips.EnqueueDownload(r.Context(), chi.URLParam(r, "id")); e != nil {
+		fail(w, 422, e)
+		return
+	}
+	write(w, 202, map[string]string{"status": "queued"})
+}
+func (a *API) deleteClip(w http.ResponseWriter, r *http.Request) {
+	if e := a.library.DeleteSourceOrClip(r.Context(), chi.URLParam(r, "id")); e != nil {
+		fail(w, 422, e)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+func (a *API) list(w http.ResponseWriter, r *http.Request) {
+	x, e := a.streamers.List(r.Context())
+	if e != nil {
+		fail(w, 500, e)
+		return
+	}
+	write(w, 200, map[string]any{"data": x})
+}
+
+type streamerInput struct {
+	TwitchLogin string `json:"twitchLogin"`
+	DisplayName string `json:"displayName"`
+}
+
+type streamerBulkInput struct {
+	TwitchLogins []string `json:"twitchLogins"`
+}
+type streamerPriorityInput struct {
+	Priority int `json:"priority"`
+}
+type streamerSubscriptionInput struct {
+	Subscribed bool `json:"subscribed"`
+}
+type subscriptionSyncInput struct {
+	StartedAt string `json:"startedAt"`
+	EndedAt   string `json:"endedAt"`
+}
+
+func (a *API) create(w http.ResponseWriter, r *http.Request) {
+	var in streamerInput
+	if json.NewDecoder(r.Body).Decode(&in) != nil {
+		fail(w, 400, errText("invalid JSON"))
+		return
+	}
+	x, e := a.streamers.Create(r.Context(), in.TwitchLogin, in.DisplayName)
+	if e != nil {
+		fail(w, 422, e)
+		return
+	}
+	write(w, 201, map[string]any{"data": x})
+}
+func (a *API) createMany(w http.ResponseWriter, r *http.Request) {
+	var in streamerBulkInput
+	if json.NewDecoder(r.Body).Decode(&in) != nil {
+		fail(w, 400, errText("invalid JSON"))
+		return
+	}
+	created, e := a.streamers.CreateMany(r.Context(), in.TwitchLogins)
+	if e != nil {
+		fail(w, 422, e)
+		return
+	}
+	write(w, 201, map[string]any{"data": map[string]any{"created": len(created)}})
+}
+func (a *API) update(w http.ResponseWriter, r *http.Request) {
+	var in streamerInput
+	if json.NewDecoder(r.Body).Decode(&in) != nil {
+		fail(w, 400, errText("invalid JSON"))
+		return
+	}
+	x, e := a.streamers.Update(r.Context(), chi.URLParam(r, "id"), in.TwitchLogin, in.DisplayName)
+	if e != nil {
+		fail(w, 422, e)
+		return
+	}
+	write(w, 200, map[string]any{"data": x})
+}
+func (a *API) adjustPriority(w http.ResponseWriter, r *http.Request) {
+	var in streamerPriorityInput
+	if json.NewDecoder(r.Body).Decode(&in) != nil || in.Priority < 0 {
+		fail(w, 400, errText("priority must be a non-negative integer"))
+		return
+	}
+	x, e := a.streamers.SetPriority(r.Context(), chi.URLParam(r, "id"), in.Priority)
+	if e != nil {
+		fail(w, 422, e)
+		return
+	}
+	write(w, 200, map[string]any{"data": x})
+}
+func (a *API) adjustSubscription(w http.ResponseWriter, r *http.Request) {
+	var in streamerSubscriptionInput
+	if json.NewDecoder(r.Body).Decode(&in) != nil {
+		fail(w, 400, errText("invalid JSON"))
+		return
+	}
+	x, e := a.streamers.SetSubscribed(r.Context(), chi.URLParam(r, "id"), in.Subscribed)
+	if e != nil {
+		fail(w, 422, e)
+		return
+	}
+	write(w, 200, map[string]any{"data": x})
+}
+func (a *API) listSubscriptions(w http.ResponseWriter, r *http.Request) {
+	x, e := a.subs.List(r.Context())
+	if e != nil {
+		fail(w, 500, e)
+		return
+	}
+	write(w, 200, map[string]any{"data": x})
+}
+func (a *API) syncSubscription(w http.ResponseWriter, r *http.Request) {
+	var in subscriptionSyncInput
+	if json.NewDecoder(r.Body).Decode(&in) != nil {
+		fail(w, 400, errText("invalid JSON"))
+		return
+	}
+	startedAt, endedAt, e := parseClipWindow(in.StartedAt, in.EndedAt)
+	if e != nil {
+		fail(w, 400, e)
+		return
+	}
+	count, e := a.subs.Sync(r.Context(), chi.URLParam(r, "id"), startedAt, endedAt)
+	if e != nil {
+		fail(w, 422, e)
+		return
+	}
+	write(w, 200, map[string]any{"data": map[string]int{"clips": count}})
+}
+func (a *API) markSubscriptionClipViewed(w http.ResponseWriter, r *http.Request) {
+	if e := a.subs.MarkViewed(r.Context(), chi.URLParam(r, "id")); e != nil {
+		fail(w, 404, e)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+func (a *API) clearSubscriptionClips(w http.ResponseWriter, r *http.Request) {
+	count, e := a.subs.Clear(r.Context())
+	if e != nil {
+		fail(w, 500, e)
+		return
+	}
+	write(w, 200, map[string]any{"data": map[string]int64{"deleted": count}})
+}
+func (a *API) delete(w http.ResponseWriter, r *http.Request) {
+	if e := a.streamers.Delete(r.Context(), chi.URLParam(r, "id")); e != nil {
+		fail(w, 500, e)
+		return
+	}
+	w.WriteHeader(204)
+}
+
+type folderInput struct {
+	Name     string  `json:"name"`
+	ParentID *string `json:"parentId"`
+}
+
+type assetInput struct {
+	Name     string  `json:"name"`
+	FolderID *string `json:"folderId"`
+}
+
+func (a *API) listAssets(w http.ResponseWriter, r *http.Request) {
+	folders, items, e := a.assets.List(r.Context())
+	if e != nil {
+		fail(w, 500, e)
+		return
+	}
+	write(w, 200, map[string]any{"data": map[string]any{"folders": folders, "assets": items}})
+}
+func (a *API) createFolder(w http.ResponseWriter, r *http.Request) {
+	var in folderInput
+	if json.NewDecoder(r.Body).Decode(&in) != nil {
+		fail(w, 400, errText("invalid JSON"))
+		return
+	}
+	item, e := a.assets.CreateFolder(r.Context(), in.Name, emptyToNil(in.ParentID))
+	if e != nil {
+		fail(w, 422, e)
+		return
+	}
+	write(w, 201, map[string]any{"data": item})
+}
+func (a *API) updateFolder(w http.ResponseWriter, r *http.Request) {
+	var in folderInput
+	if json.NewDecoder(r.Body).Decode(&in) != nil {
+		fail(w, 400, errText("invalid JSON"))
+		return
+	}
+	if e := a.assets.UpdateFolder(r.Context(), chi.URLParam(r, "id"), in.Name, emptyToNil(in.ParentID)); e != nil {
+		fail(w, 422, e)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+func (a *API) deleteFolder(w http.ResponseWriter, r *http.Request) {
+	if e := a.assets.DeleteFolder(r.Context(), chi.URLParam(r, "id")); e != nil {
+		fail(w, 422, e)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+func (a *API) uploadAsset(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1024<<20)
+	if e := r.ParseMultipartForm(32 << 20); e != nil {
+		fail(w, 400, errText("invalid or too large multipart upload"))
+		return
+	}
+	if r.MultipartForm != nil {
+		defer r.MultipartForm.RemoveAll()
+	}
+	file, header, e := r.FormFile("file")
+	if e != nil {
+		fail(w, 400, errText("file is required"))
+		return
+	}
+	defer file.Close()
+	item, e := a.assets.Upload(r.Context(), emptyToNilString(r.FormValue("folderId")), header.Filename, header.Header.Get("Content-Type"), header.Size, file)
+	if e != nil {
+		fail(w, 422, e)
+		return
+	}
+	write(w, 201, map[string]any{"data": item})
+}
+func (a *API) updateAsset(w http.ResponseWriter, r *http.Request) {
+	var in assetInput
+	if json.NewDecoder(r.Body).Decode(&in) != nil {
+		fail(w, 400, errText("invalid JSON"))
+		return
+	}
+	if e := a.assets.UpdateAsset(r.Context(), chi.URLParam(r, "id"), in.Name, emptyToNil(in.FolderID)); e != nil {
+		fail(w, 422, e)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+func (a *API) deleteAsset(w http.ResponseWriter, r *http.Request) {
+	if e := a.assets.DeleteAsset(r.Context(), chi.URLParam(r, "id")); e != nil {
+		fail(w, 422, e)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+type templateInput struct {
+	Name           string          `json:"name"`
+	Description    string          `json:"description"`
+	PreviewAssetID *string         `json:"previewAssetId"`
+	Config         json.RawMessage `json:"config"`
+}
+
+func decodeTemplate(r *http.Request) (videotemplate.Input, error) {
+	var in templateInput
+	if e := json.NewDecoder(r.Body).Decode(&in); e != nil {
+		return videotemplate.Input{}, errText("invalid JSON")
+	}
+	config, e := composition.ParseConfig(in.Config)
+	if e != nil {
+		return videotemplate.Input{}, e
+	}
+	return videotemplate.Input{Name: in.Name, Description: in.Description, PreviewAssetID: emptyToNil(in.PreviewAssetID), Config: config}, nil
+}
+func (a *API) listTemplates(w http.ResponseWriter, r *http.Request) {
+	items, e := a.templates.List(r.Context())
+	if e != nil {
+		fail(w, 500, e)
+		return
+	}
+	write(w, 200, map[string]any{"data": items})
+}
+func (a *API) getTemplate(w http.ResponseWriter, r *http.Request) {
+	item, e := a.templates.Get(r.Context(), chi.URLParam(r, "id"))
+	if e != nil {
+		fail(w, 404, e)
+		return
+	}
+	write(w, 200, map[string]any{"data": item})
+}
+func (a *API) createTemplate(w http.ResponseWriter, r *http.Request) {
+	in, e := decodeTemplate(r)
+	if e != nil {
+		fail(w, 400, e)
+		return
+	}
+	item, e := a.templates.Create(r.Context(), in)
+	if e != nil {
+		fail(w, 422, e)
+		return
+	}
+	write(w, 201, map[string]any{"data": item})
+}
+func (a *API) updateTemplate(w http.ResponseWriter, r *http.Request) {
+	in, e := decodeTemplate(r)
+	if e != nil {
+		fail(w, 400, e)
+		return
+	}
+	item, e := a.templates.Update(r.Context(), chi.URLParam(r, "id"), in)
+	if e != nil {
+		fail(w, 422, e)
+		return
+	}
+	write(w, 200, map[string]any{"data": item})
+}
+func (a *API) setDefaultTemplate(w http.ResponseWriter, r *http.Request) {
+	if e := a.templates.SetDefault(r.Context(), chi.URLParam(r, "id")); e != nil {
+		fail(w, 422, e)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+func (a *API) duplicateTemplate(w http.ResponseWriter, r *http.Request) {
+	item, e := a.templates.Duplicate(r.Context(), chi.URLParam(r, "id"))
+	if e != nil {
+		fail(w, 422, e)
+		return
+	}
+	write(w, 201, map[string]any{"data": item})
+}
+func (a *API) deleteTemplate(w http.ResponseWriter, r *http.Request) {
+	if e := a.templates.Delete(r.Context(), chi.URLParam(r, "id")); e != nil {
+		fail(w, 422, e)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func emptyToNil(v *string) *string {
+	if v == nil || *v == "" {
+		return nil
+	}
+	return v
+}
+func emptyToNilString(v string) *string {
+	if v == "" {
+		return nil
+	}
+	return &v
+}
+
+type errText string
+
+func (e errText) Error() string { return string(e) }
+func write(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
+}
+func fail(w http.ResponseWriter, status int, e error) {
+	write(w, status, map[string]any{"error": map[string]string{"message": e.Error()}})
+}

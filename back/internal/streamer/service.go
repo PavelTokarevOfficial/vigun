@@ -1,0 +1,137 @@
+package streamer
+
+import (
+	"context"
+	"fmt"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"strings"
+)
+
+type Streamer struct {
+	ID           string `json:"id"`
+	TwitchLogin  string `json:"twitchLogin"`
+	DisplayName  string `json:"displayName"`
+	TwitchUserID string `json:"twitchUserId"`
+	Priority     int    `json:"priority"`
+	Subscribed   bool   `json:"subscribed"`
+}
+type Service struct{ db *pgxpool.Pool }
+
+func New(db *pgxpool.Pool) *Service { return &Service{db} }
+func (s *Service) List(ctx context.Context) ([]Streamer, error) {
+	rows, e := s.db.Query(ctx, "SELECT id,twitch_login,display_name,COALESCE(twitch_user_id,''),priority,subscribed FROM streamers ORDER BY priority DESC, created_at DESC")
+	if e != nil {
+		return nil, e
+	}
+	defer rows.Close()
+	r := []Streamer{}
+	for rows.Next() {
+		var x Streamer
+		if e = rows.Scan(&x.ID, &x.TwitchLogin, &x.DisplayName, &x.TwitchUserID, &x.Priority, &x.Subscribed); e != nil {
+			return nil, e
+		}
+		r = append(r, x)
+	}
+	return r, rows.Err()
+}
+func (s *Service) Create(ctx context.Context, login, name string) (Streamer, error) {
+	login = strings.ToLower(strings.TrimSpace(login))
+	name = strings.TrimSpace(name)
+	if login == "" {
+		return Streamer{}, fmt.Errorf("streamer nickname is required")
+	}
+	if name == "" {
+		name = login
+	}
+	var x Streamer
+	e := s.db.QueryRow(ctx, "INSERT INTO streamers(twitch_login,display_name) VALUES($1,$2) RETURNING id,twitch_login,display_name,COALESCE(twitch_user_id,''),priority,subscribed", login, name).Scan(&x.ID, &x.TwitchLogin, &x.DisplayName, &x.TwitchUserID, &x.Priority, &x.Subscribed)
+	return x, e
+}
+
+func (s *Service) CreateMany(ctx context.Context, logins []string) ([]Streamer, error) {
+	unique := make(map[string]struct{}, len(logins))
+	var normalized []string
+	for _, login := range logins {
+		login = strings.ToLower(strings.TrimSpace(login))
+		if login == "" {
+			continue
+		}
+		if _, exists := unique[login]; exists {
+			continue
+		}
+		unique[login] = struct{}{}
+		normalized = append(normalized, login)
+	}
+	if len(normalized) == 0 {
+		return nil, fmt.Errorf("at least one streamer nickname is required")
+	}
+	if len(normalized) > 100 {
+		return nil, fmt.Errorf("at most 100 streamer nicknames can be added at once")
+	}
+
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	created := make([]Streamer, 0, len(normalized))
+	for _, login := range normalized {
+		var row Streamer
+		err = tx.QueryRow(ctx, `INSERT INTO streamers(twitch_login,display_name)
+			VALUES($1,$1) ON CONFLICT(twitch_login) DO NOTHING
+			RETURNING id,twitch_login,display_name,COALESCE(twitch_user_id,''),priority,subscribed`, login).Scan(&row.ID, &row.TwitchLogin, &row.DisplayName, &row.TwitchUserID, &row.Priority, &row.Subscribed)
+		if err == pgx.ErrNoRows {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		created = append(created, row)
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return created, nil
+}
+func (s *Service) Update(ctx context.Context, id, login, name string) (Streamer, error) {
+	login = strings.ToLower(strings.TrimSpace(login))
+	name = strings.TrimSpace(name)
+	if login == "" {
+		return Streamer{}, fmt.Errorf("streamer nickname is required")
+	}
+	if name == "" {
+		name = login
+	}
+	var x Streamer
+	e := s.db.QueryRow(ctx, `UPDATE streamers
+		SET twitch_login=$2,display_name=$3,
+			twitch_user_id=CASE WHEN twitch_login <> $2 THEN NULL ELSE twitch_user_id END,
+			updated_at=now()
+		WHERE id=$1
+		RETURNING id,twitch_login,display_name,COALESCE(twitch_user_id,''),priority,subscribed`, id, login, name).Scan(&x.ID, &x.TwitchLogin, &x.DisplayName, &x.TwitchUserID, &x.Priority, &x.Subscribed)
+	return x, e
+}
+func (s *Service) SetPriority(ctx context.Context, id string, priority int) (Streamer, error) {
+	if priority < 0 {
+		return Streamer{}, fmt.Errorf("priority must be non-negative")
+	}
+	var x Streamer
+	e := s.db.QueryRow(ctx, `UPDATE streamers
+		SET priority=$2,updated_at=now()
+		WHERE id=$1
+		RETURNING id,twitch_login,display_name,COALESCE(twitch_user_id,''),priority,subscribed`, id, priority).Scan(&x.ID, &x.TwitchLogin, &x.DisplayName, &x.TwitchUserID, &x.Priority, &x.Subscribed)
+	return x, e
+}
+func (s *Service) SetSubscribed(ctx context.Context, id string, subscribed bool) (Streamer, error) {
+	var x Streamer
+	e := s.db.QueryRow(ctx, `UPDATE streamers SET subscribed=$2,updated_at=now() WHERE id=$1
+		RETURNING id,twitch_login,display_name,COALESCE(twitch_user_id,''),priority,subscribed`, id, subscribed).
+		Scan(&x.ID, &x.TwitchLogin, &x.DisplayName, &x.TwitchUserID, &x.Priority, &x.Subscribed)
+	return x, e
+}
+func (s *Service) Delete(ctx context.Context, id string) error {
+	_, e := s.db.Exec(ctx, "DELETE FROM streamers WHERE id=$1", id)
+	return e
+}

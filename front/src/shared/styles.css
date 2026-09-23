@@ -1,0 +1,42 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+body {
+  @apply m-0 bg-slate-50 text-slate-950 font-sans;
+}
+input,
+select {
+  @apply rounded border border-slate-300 bg-white px-3 py-2;
+}
+.app-button {
+  @apply rounded-xl px-3 py-2 font-medium disabled:cursor-not-allowed disabled:opacity-50;
+}
+.app-button--primary {
+  @apply bg-violet-600 text-white hover:bg-violet-700;
+}
+.app-button--danger {
+  @apply bg-red-600 text-white hover:bg-red-700;
+}
+.app-button--secondary {
+  @apply bg-slate-200 text-slate-900 hover:bg-slate-300;
+}
+.empty-state {
+  @apply mt-6 rounded border border-dashed border-slate-300 p-8 text-slate-500;
+}
+.error-state {
+  @apply mt-3 text-sm text-red-600;
+}
+
+/* Minimal tokens required by the local shadcn-vue dropdown component. */
+@theme {
+  --color-foreground: oklch(0.145 0 0);
+  --color-popover: oklch(1 0 0);
+  --color-popover-foreground: oklch(0.145 0 0);
+  --color-accent: oklch(0.97 0 0);
+  --color-accent-foreground: oklch(0.205 0 0);
+  --color-muted-foreground: oklch(0.556 0 0);
+  --color-border: oklch(0.922 0 0);
+  --color-destructive: oklch(0.577 0.245 27.325);
+}

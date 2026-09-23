@@ -1,0 +1,19 @@
+# Media pipeline
+
+Импорт Twitch-клипа сразу создаёт download-job. После скачивания пользователь может сохранить один или несколько интервалов исходника как готовый фрагмент без физической перезаписи source-файла. «Паровозик» собирает timeline из нескольких готовых фрагментов: первый clip остаётся основным входом render-job, остальные downloaded sources добавляются в immutable snapshot как служебные video assets. Если у выбранного шаблона включён train mode, настроенные video assets циклически вставляются между фрагментами как перебивки.
+
+Артефакты лежат в object storage: `sources/{clipID}/source.mp4`, `audio/{clipID}/audio.wav`, `subtitles/{clipID}/subtitles.srt` и `renders/{clipID}/{jobID}.mp4`.
+
+Worker берёт job транзакционно, скачивает исходный ролик через Chromium/Rod, извлекает mono WAV 16 kHz через FFmpeg, передаёт WAV в `whisper-cli` и получает SRT. Далее FFmpeg собирает vertical layout: размытый фон, исходный ролик по центру и burned-in SRT. Для этого образ намеренно проверяет FFmpeg-фильтр `subtitles` (он требует сборку с libass); FFmpeg без него не подходит для worker. Временные файлы существуют только в каталоге job и удаляются после него.
+
+Каждый устойчивый результат проверяется по ключу до работы: source/audio/subtitle/render можно безопасно переиспользовать при retry. Перед запуском каждого отсутствующего шага worker обновляет `processing_jobs.current_step` и процент прогресса (`extracting_audio`, `transcribing`, `rendering`). Пути FFmpeg и Whisper задаются environment variables, а не зашиты в код.
+
+Для новых process jobs layout больше не задан жёстко. API сохраняет отредактированный для конкретного запуска template snapshot с canvas и слоями; worker получает только этот immutable JSON и локальные файлы ассетов. FFmpeg adapter компилирует video, image/GIF, blur, text и subtitles layers в filter graph, сохраняя поддержку старых `input_video`, `asset_video`, `color` и `audio`. Субтитры по-прежнему получаются Whisper в SRT, а затем встраиваются фильтром `subtitles`; размер и outline берутся из subtitle layer template. Legacy jobs без snapshot используют `OUTPUT_WIDTH`, `OUTPUT_HEIGHT`, `BACKGROUND_BLUR` и `FFMPEG_PRESET` как совместимый fallback.
+
+Если snapshot содержит `timeline.segments`, worker собирает их строго в порядке массива. Сегмент может ссылаться на интервал исходного Twitch-клипа или на video asset; каждый из них обрезается парой `trim`/`atrim`, временные метки сбрасываются через `setpts`/`asetpts`, затем video/audio соединяются `concat`. Если вставленный ролик не содержит аудиопотока, worker создаёт для него тишину точной длительности, поэтому монтаж не ломается и не рассинхронизируется. Один и тот же собранный монтаж используется всеми video-слоями с источником `clip`. Если asset-сегмент связан с отдельным video-слоем через `timelineSegmentId`, в основной clip-слой на этом интервале подставляется прозрачный кадр, а сам asset рендерится отдельным overlay с координатами, размером, временем и z-order этого слоя; поэтому картинка вставки не теряется и может располагаться выше или ниже остальных слоёв.
+
+Для image/GIF-слоя в режиме `contain` FFmpeg переводит вход в RGBA и дополняет его до размеров блока прозрачными пикселями. Альфа-канал исходного PNG/GIF сохраняется, поэтому свободное место при сохранении пропорций и прозрачные закруглённые края показывают нижние слои, а не чёрный фон.
+
+`startTime`/`endTime` ограничивают присутствие слоя на итоговой шкале. Для visual layers FFmpeg использует временный `enable`, для asset video/image/GIF дополнительно сдвигает PTS, а для subtitle layers создаётся отдельный SRT, обрезанный к диапазону слоя. При вставке asset-сегмента исходные Twitch-субтитры получают соответствующий временной разрыв и не показываются поверх вставленного ролика.
+
+Это поведение зафиксировано unit test-ом `internal/processing/runner_test.go`: retry не должен повторно скачивать исходник, извлекать audio, вызывать Whisper или перерендеривать готовый вариант.
