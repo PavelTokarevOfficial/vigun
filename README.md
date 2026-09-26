@@ -2,6 +2,14 @@
 
 Локальный modular monolith для импорта Twitch Clips и сборки вертикальных роликов с субтитрами.
 
+## Cloudflared тунель
+
+Команда для запуска cloudflared тунеля чтобы можно было отправлять видео без вервера
+
+```bash
+cloudflared tunnel --url http://localhost:5173
+```
+
 ## Prerequisites
 
 - Docker Compose;
