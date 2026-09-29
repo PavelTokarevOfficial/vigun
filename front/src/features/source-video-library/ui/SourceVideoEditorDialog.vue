@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { X } from '@lucide/vue'
-import VideoTimeline from '@/features/template-editor/ui/VideoTimeline.vue'
 import AppButton from '@/shared/ui/AppButton.vue'
 import type { SourceVideoLibraryModel } from '../model/useSourceVideoLibrary'
+import SourceVideoRangeTimeline from './SourceVideoRangeTimeline.vue'
 
 const props = defineProps<{ library: SourceVideoLibraryModel }>()
 const {
@@ -11,17 +11,18 @@ const {
   closeEditor,
   editorElement,
   editorVideo,
+  isPreviewPlaying,
   playhead,
   saveCut,
   savedMessage,
-  segments,
   selectedSegment,
-  selectedSegmentID,
   setTimelineTime,
   startPreview,
+  stopPreview,
   title,
+  togglePreview,
   updatePreview,
-  updateSegments,
+  updateSelection,
   undoLastAction,
 } = props.library
 function setVideoElement(value: unknown) {
@@ -67,25 +68,21 @@ function setVideoElement(value: unknown) {
             preload="metadata"
             class="h-full w-full object-contain"
             @play="startPreview"
+            @pause="stopPreview"
             @timeupdate="updatePreview"
           />
         </div>
         <div class="shrink-0 border-t border-slate-200 bg-slate-50 p-1.5">
-          <VideoTimeline
-            compact
-            source-only
+          <SourceVideoRangeTimeline
+            v-if="selectedSegment"
             :can-undo="canUndo"
-            :segments="segments"
-            :layers="[]"
-            :assets="[]"
-            :folders="[]"
-            :source-duration="Math.max(0.1, editorVideo.duration)"
-            :selected-layer-id="null"
-            :selected-segment-id="selectedSegmentID"
-            :playhead-time="playhead"
-            @update-segments="updateSegments"
-            @select-segment="selectedSegmentID = $event"
+            :duration="Math.max(0.1, editorVideo.duration)"
+            :segment="selectedSegment"
+            :playhead="playhead"
+            :playing="isPreviewPlaying"
+            @update-segment="updateSelection"
             @update-time="setTimelineTime"
+            @toggle-preview="togglePreview"
             @undo="undoLastAction"
           />
         </div>

@@ -19,7 +19,7 @@ export function useSourceVideoLibrary() {
   const segments = ref<TimelineSegment[]>([])
   const selectedSegmentID = ref<string | null>(null)
   const playhead = ref(0)
-  const previewSegmentIndex = ref(0)
+  const isPreviewPlaying = ref(false)
   const savedMessage = ref('')
   const segmentHistory = ref<TimelineSegment[][]>([])
 
@@ -135,57 +135,49 @@ export function useSourceVideoLibrary() {
     title.value = `${video.name.replace(/\.[^.]+$/, '')} — фрагмент ${video.cuts + 1}`
     savedMessage.value = ''
     segmentHistory.value = []
+    const segmentID = `cut-${crypto.randomUUID().slice(0, 8)}`
     segments.value = [
       {
-        id: `cut-${crypto.randomUUID().slice(0, 8)}`,
+        id: segmentID,
         source: 'clip',
         start: 0,
-        end: video.duration,
+        end: Math.min(30, video.duration),
         sourceDuration: video.duration,
       },
     ]
-    selectedSegmentID.value = null
+    selectedSegmentID.value = segmentID
     playhead.value = 0
-    previewSegmentIndex.value = 0
+    isPreviewPlaying.value = false
   }
 
   function closeEditor() {
     editorElement.value?.pause()
+    isPreviewPlaying.value = false
     editorElement.value = null
     editorVideo.value = null
     savedMessage.value = ''
     segmentHistory.value = []
   }
 
-  function segmentOutputStart(index: number) {
-    return segments.value
-      .slice(0, index)
-      .reduce(
-        (total, segment) => total + Math.max(0, segment.end - segment.start),
-        0,
-      )
+  function setTimelineTime(time: number) {
+    const target = Math.min(
+      Math.max(0, time),
+      Math.max(0, editorVideo.value?.duration ?? 0),
+    )
+    playhead.value = target
+    if (editorElement.value) editorElement.value.currentTime = target
   }
 
-  function setTimelineTime(time: number) {
-    const target = Math.min(Math.max(0, time), outputDuration.value)
-    let outputStart = 0
-    for (const [index, segment] of segments.value.entries()) {
-      const duration = Math.max(0, segment.end - segment.start)
-      if (
-        target <= outputStart + duration ||
-        index === segments.value.length - 1
-      ) {
-        previewSegmentIndex.value = index
-        playhead.value = target
-        if (editorElement.value) {
-          editorElement.value.currentTime = Math.max(
-            0,
-            Math.min(segment.end, segment.start + target - outputStart),
-          )
-        }
-        return
-      }
-      outputStart += duration
+  function updateSelection(segment: TimelineSegment) {
+    const current = selectedSegment.value
+    if (current && JSON.stringify(current) === JSON.stringify(segment)) return
+    segmentHistory.value.push(segments.value.map((item) => ({ ...item })))
+    if (segmentHistory.value.length > 50) segmentHistory.value.shift()
+    segments.value = [{ ...segment, source: 'clip' }]
+    selectedSegmentID.value = segment.id
+    savedMessage.value = ''
+    if (playhead.value < segment.start || playhead.value > segment.end) {
+      setTimelineTime(segment.start)
     }
   }
 
@@ -206,41 +198,55 @@ export function useSourceVideoLibrary() {
     const previous = segmentHistory.value.pop()
     if (!previous) return
     segments.value = previous.map((segment) => ({ ...segment }))
-    selectedSegmentID.value = null
+    selectedSegmentID.value = segments.value[0]?.id ?? null
     savedMessage.value = ''
-    setTimelineTime(Math.min(playhead.value, outputDuration.value))
+    if (segments.value[0]) setTimelineTime(segments.value[0].start)
   }
 
   function startPreview() {
-    if (playhead.value >= outputDuration.value - 0.05) setTimelineTime(0)
-    else setTimelineTime(playhead.value)
+    const element = editorElement.value
+    const segment = selectedSegment.value
+    if (!element || !segment) return
+    if (element.currentTime < segment.start || element.currentTime >= segment.end - 0.04) {
+      setTimelineTime(segment.start)
+    }
+    isPreviewPlaying.value = true
   }
 
   function updatePreview() {
     const element = editorElement.value
-    const segment = segments.value[previewSegmentIndex.value]
+    const segment = selectedSegment.value
     if (!element || !segment) return
     if (element.currentTime >= segment.end - 0.04) {
-      const next = segments.value[previewSegmentIndex.value + 1]
-      if (!next) {
-        playhead.value = outputDuration.value
-        element.pause()
-        return
-      }
-      previewSegmentIndex.value += 1
-      playhead.value = segmentOutputStart(previewSegmentIndex.value)
-      element.currentTime = next.start
-      void element.play().catch(() => undefined)
+      playhead.value = segment.end
+      element.pause()
+      isPreviewPlaying.value = false
       return
     }
     if (element.currentTime < segment.start) {
       element.currentTime = segment.start
       return
     }
-    playhead.value =
-      segmentOutputStart(previewSegmentIndex.value) +
-      element.currentTime -
-      segment.start
+    playhead.value = element.currentTime
+  }
+
+  async function togglePreview() {
+    const element = editorElement.value
+    const segment = selectedSegment.value
+    if (!element || !segment) return
+    if (!element.paused) {
+      element.pause()
+      isPreviewPlaying.value = false
+      return
+    }
+    if (element.currentTime < segment.start || element.currentTime >= segment.end - 0.04) {
+      setTimelineTime(segment.start)
+    }
+    await element.play().catch(() => undefined)
+  }
+
+  function stopPreview() {
+    isPreviewPlaying.value = false
   }
 
   async function saveCut() {
@@ -263,7 +269,6 @@ export function useSourceVideoLibrary() {
       )
       video.cuts += 1
       savedMessage.value = `Фрагмент ${segment.start.toFixed(1)}–${segment.end.toFixed(1)} сек. отправлен на создание. Прогресс виден в Pipeline.`
-      selectedSegmentID.value = null
       title.value = `${video.name.replace(/\.[^.]+$/, '')} — фрагмент ${video.cuts + 1}`
       await load()
     } catch (cause) {
@@ -301,6 +306,7 @@ export function useSourceVideoLibrary() {
     error,
     folderId,
     folders,
+    isPreviewPlaying,
     load,
     openEditor,
     outputDuration,
@@ -315,9 +321,12 @@ export function useSourceVideoLibrary() {
     selectedSegmentID,
     setTimelineTime,
     startPreview,
+    stopPreview,
     title,
+    togglePreview,
     updatePreview,
     updateSegments,
+    updateSelection,
     undoLastAction,
     upload,
     videos,
