@@ -709,13 +709,57 @@ export function usePipelineWorkspace() {
     }
   }
 
-  let timer: number | undefined
+  let socket: WebSocket | null = null
+  let reconnectTimer: number | undefined
+  let fallbackTimer: number | undefined
+  let refreshTimer: number | undefined
+  let reconnectDelay = 1000
+  let disposed = false
+
+  function scheduleRealtimeLoad() {
+    if (refreshTimer) window.clearTimeout(refreshTimer)
+    refreshTimer = window.setTimeout(() => {
+      refreshTimer = undefined
+      void load()
+    }, 80)
+  }
+
+  function connectRealtime() {
+    if (disposed) return
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+    socket = new WebSocket(`${protocol}//${window.location.host}/api/events`)
+    socket.onopen = () => {
+      reconnectDelay = 1000
+      scheduleRealtimeLoad()
+    }
+    socket.onmessage = (event) => {
+      try {
+        const message = JSON.parse(String(event.data)) as { scope?: string }
+        if (message.scope === 'pipeline') scheduleRealtimeLoad()
+      } catch {
+        // Ignore malformed events; the fallback refresh will recover state.
+      }
+    }
+    socket.onerror = () => socket?.close()
+    socket.onclose = () => {
+      socket = null
+      if (disposed) return
+      reconnectTimer = window.setTimeout(connectRealtime, reconnectDelay)
+      reconnectDelay = Math.min(reconnectDelay * 2, 15_000)
+    }
+  }
+
   onMounted(() => {
     void load()
-    timer = window.setInterval(load, 3000)
+    connectRealtime()
+    fallbackTimer = window.setInterval(load, 60_000)
   })
   onBeforeUnmount(() => {
-    if (timer) window.clearInterval(timer)
+    disposed = true
+    if (reconnectTimer) window.clearTimeout(reconnectTimer)
+    if (refreshTimer) window.clearTimeout(refreshTimer)
+    if (fallbackTimer) window.clearInterval(fallbackTimer)
+    socket?.close()
   })
 
   return {

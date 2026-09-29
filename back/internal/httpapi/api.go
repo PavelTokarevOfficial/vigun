@@ -9,6 +9,7 @@ import (
 	"github.com/finde-clip/finde-v2/back/internal/instagram"
 	"github.com/finde-clip/finde-v2/back/internal/media"
 	"github.com/finde-clip/finde-v2/back/internal/processing"
+	"github.com/finde-clip/finde-v2/back/internal/realtime"
 	"github.com/finde-clip/finde-v2/back/internal/sourcevideo"
 	"github.com/finde-clip/finde-v2/back/internal/streamer"
 	"github.com/finde-clip/finde-v2/back/internal/subscription"
@@ -22,6 +23,8 @@ import (
 	"time"
 )
 
+const websocketWriteTimeout = 5 * time.Second
+
 type API struct {
 	streamers    *streamer.Service
 	clips        *clip.Service
@@ -33,15 +36,17 @@ type API struct {
 	jobs         *processing.Jobs
 	instagram    *instagram.Service
 	sourceVideos *sourcevideo.Service
+	events       *realtime.Hub
 	log          *slog.Logger
 }
 
-func New(s *streamer.Service, c *clip.Service, subs *subscription.Service, assets *assets.Service, templates *videotemplate.Service, library *media.Library, v *media.Videos, j *processing.Jobs, instagram *instagram.Service, sourceVideos *sourcevideo.Service, l *slog.Logger) *API {
-	return &API{streamers: s, clips: c, subs: subs, assets: assets, templates: templates, library: library, videos: v, jobs: j, instagram: instagram, sourceVideos: sourceVideos, log: l}
+func New(s *streamer.Service, c *clip.Service, subs *subscription.Service, assets *assets.Service, templates *videotemplate.Service, library *media.Library, v *media.Videos, j *processing.Jobs, instagram *instagram.Service, sourceVideos *sourcevideo.Service, events *realtime.Hub, l *slog.Logger) *API {
+	return &API{streamers: s, clips: c, subs: subs, assets: assets, templates: templates, library: library, videos: v, jobs: j, instagram: instagram, sourceVideos: sourceVideos, events: events, log: l}
 }
 func (a *API) Router() http.Handler {
 	r := chi.NewRouter()
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) { write(w, 200, map[string]bool{"ok": true}) })
+	r.Get("/api/events", a.pipelineEvents)
 	r.Route("/api/streamers", func(r chi.Router) {
 		r.Get("/", a.list)
 		r.Post("/", a.create)

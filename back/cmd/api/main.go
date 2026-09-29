@@ -14,6 +14,7 @@ import (
 	"github.com/finde-clip/finde-v2/back/internal/media"
 	"github.com/finde-clip/finde-v2/back/internal/platform/db"
 	"github.com/finde-clip/finde-v2/back/internal/processing"
+	"github.com/finde-clip/finde-v2/back/internal/realtime"
 	"github.com/finde-clip/finde-v2/back/internal/sourcevideo"
 	"github.com/finde-clip/finde-v2/back/internal/streamer"
 	"github.com/finde-clip/finde-v2/back/internal/subscription"
@@ -33,7 +34,8 @@ func main() {
 		log.Error("invalid config", "error", e)
 		os.Exit(1)
 	}
-	ctx := context.Background()
+	ctx, cancelRuntime := context.WithCancel(context.Background())
+	defer cancelRuntime()
 	if e = db.Migrate(cfg.DatabaseURL, "migrations"); e != nil {
 		log.Error("migration failed", "error", e)
 		os.Exit(1)
@@ -64,7 +66,9 @@ func main() {
 		instagramFactory,
 		cfg.InstagramAppSecret,
 	)
-	srv := &http.Server{Addr: cfg.HTTPAddr, Handler: httpapi.New(streamer.New(pool), clip.New(pool, twitchClient, templateService), subscriptionService, assetService, templateService, media.NewLibrary(pool, store), media.NewVideos(pool, store), processing.NewJobs(pool), instagramService, sourcevideo.New(pool, store), log).Router(), ReadHeaderTimeout: 5 * time.Second}
+	events := realtime.New()
+	go postgres.ListenPipelineEvents(ctx, pool, log, events.Publish)
+	srv := &http.Server{Addr: cfg.HTTPAddr, Handler: httpapi.New(streamer.New(pool), clip.New(pool, twitchClient, templateService), subscriptionService, assetService, templateService, media.NewLibrary(pool, store), media.NewVideos(pool, store), processing.NewJobs(pool), instagramService, sourcevideo.New(pool, store), events, log).Router(), ReadHeaderTimeout: 5 * time.Second}
 	go func() {
 		log.Info("api started", "addr", cfg.HTTPAddr)
 		if e := srv.ListenAndServe(); e != nil && e != http.ErrServerClosed {
@@ -74,6 +78,7 @@ func main() {
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	<-sig
+	cancelRuntime()
 	stop, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(stop)
