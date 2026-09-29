@@ -3,11 +3,13 @@ package processing
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"os"
 	"testing"
 	"time"
 
+	"github.com/finde-clip/finde-v2/back/internal/composition"
 	"github.com/finde-clip/finde-v2/back/internal/media"
 )
 
@@ -48,13 +50,17 @@ func (d *fakeDownloader) Download(_ context.Context, _ string) (io.ReadCloser, s
 }
 
 type fakeMedia struct {
-	audioCalls, renderCalls int
-	lastRenderInput         RenderInput
+	audioCalls, cutCalls, renderCalls int
+	lastRenderInput                   RenderInput
 }
 
 func (m *fakeMedia) ExtractAudio(_ context.Context, _, out string) error {
 	m.audioCalls++
 	return os.WriteFile(out, []byte("audio"), 0o600)
+}
+func (m *fakeMedia) Cut(_ context.Context, _, out string, _ composition.Timeline, _ string) error {
+	m.cutCalls++
+	return os.WriteFile(out, []byte("fragment"), 0o600)
 }
 func (m *fakeMedia) Render(_ context.Context, in RenderInput) error {
 	m.renderCalls++
@@ -121,5 +127,82 @@ func TestProcessRendersWithoutSubtitlesWhenTranscriptionIsEmpty(t *testing.T) {
 	}
 	if _, ok := store.objects[result.RenderKey]; !ok {
 		t.Fatalf("render %q was not stored", result.RenderKey)
+	}
+}
+
+func TestProcessSkipsAudioAndWhisperWithoutSubtitleLayer(t *testing.T) {
+	store, downloader, processor, transcriber := newMemoryStorage(), &fakeDownloader{}, &fakeMedia{}, &fakeTranscriber{}
+	runner := Runner{Storage: store, Downloader: downloader, Media: processor, Transcriber: transcriber}
+	steps := []string{}
+	config := composition.Default(1080, 1920, 25)
+	layers := make([]composition.Layer, 0, len(config.Layers))
+	for _, layer := range config.Layers {
+		if layer.Type != "subtitles" {
+			layers = append(layers, layer)
+		}
+	}
+	config.Layers = layers
+	snapshot, err := json.Marshal(composition.Snapshot{Version: composition.CurrentVersion, TemplateID: "without-subtitles", TemplateName: "Without subtitles", Config: config})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := runner.Process(context.Background(), Input{ClipID: "no-subtitles", ClipURL: "https://example.test/clip", Width: 1080, Height: 1920, Blur: 25, Preset: "veryfast", TemplateSnapshot: snapshot, Progress: func(step, _ string, _ int) error {
+		steps = append(steps, step)
+		return nil
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if processor.audioCalls != 0 || transcriber.calls != 0 {
+		t.Fatalf("audio or Whisper ran without a subtitle layer: audio=%d transcribe=%d", processor.audioCalls, transcriber.calls)
+	}
+	if result.AudioKey != "" || result.SubtitleKey != "" {
+		t.Fatalf("unexpected subtitle artifacts: audio=%q subtitle=%q", result.AudioKey, result.SubtitleKey)
+	}
+	if processor.renderCalls != 1 || processor.lastRenderInput.SubtitlePath != "" {
+		t.Fatalf("expected one render without subtitles, calls=%d path=%q", processor.renderCalls, processor.lastRenderInput.SubtitlePath)
+	}
+	for _, step := range steps {
+		if step == "extracting_audio" || step == "transcribing" {
+			t.Fatalf("unexpected subtitle step %q in %#v", step, steps)
+		}
+	}
+	if !containsStep(steps, "rendering_without_subtitles") {
+		t.Fatalf("missing explicit render status without subtitles: %#v", steps)
+	}
+}
+
+func containsStep(steps []string, expected string) bool {
+	for _, step := range steps {
+		if step == expected {
+			return true
+		}
+	}
+	return false
+}
+
+func TestCreateFragmentCopiesUnchangedSourceWithoutFFmpeg(t *testing.T) {
+	store := newMemoryStorage()
+	store.objects["assets/source.mp4"] = []byte("original-video")
+	processor := &fakeMedia{}
+	runner := Runner{Storage: store, Media: processor}
+	steps := []string{}
+
+	result, err := runner.CreateFragment(context.Background(), Input{ClipID: "fragment-copy", SourceKey: "assets/source.mp4", Preset: "veryfast", Progress: func(step, _ string, _ int) error {
+		steps = append(steps, step)
+		return nil
+	}}, composition.Timeline{Segments: []composition.Segment{{ID: "full", Source: "clip", Start: 0, End: 42, SourceDuration: 42}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if processor.cutCalls != 0 {
+		t.Fatalf("FFmpeg cut was called for an unchanged source")
+	}
+	if string(store.objects[result.SourceKey]) != "original-video" {
+		t.Fatalf("fragment copy does not match source")
+	}
+	if !containsStep(steps, "copying_fragment") {
+		t.Fatalf("missing copy progress step: %#v", steps)
 	}
 }

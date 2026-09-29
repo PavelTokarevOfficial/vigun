@@ -55,7 +55,8 @@ func (l *Library) DeleteSourceOrClip(ctx context.Context, clipID string) error {
 	var hasActiveJob bool
 	if err = tx.QueryRow(ctx, `SELECT EXISTS(
 		SELECT 1 FROM processing_jobs
-		WHERE clip_id=$1 AND status IN ('pending','running')
+		WHERE (clip_id=$1 OR clip_id IN (SELECT id FROM clips WHERE source_clip_id=$1))
+		AND status IN ('pending','running')
 	)`, clipID).Scan(&hasActiveJob); err != nil {
 		return err
 	}

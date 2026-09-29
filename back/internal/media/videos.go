@@ -121,7 +121,8 @@ func (v *Videos) Delete(ctx context.Context, id string) error {
 	var hasRender, hasSource bool
 	if err = tx.QueryRow(ctx, `SELECT
 		EXISTS(SELECT 1 FROM media_files WHERE clip_id=$1 AND type='render'),
-		EXISTS(SELECT 1 FROM media_files WHERE clip_id=$1 AND type='source')`, clipID).Scan(&hasRender, &hasSource); err != nil {
+		EXISTS(SELECT 1 FROM media_files WHERE clip_id=$1 AND type='source') OR
+		EXISTS(SELECT 1 FROM clips WHERE id=$1 AND (source_video_id IS NOT NULL OR source_asset_id IS NOT NULL OR source_clip_id IS NOT NULL))`, clipID).Scan(&hasRender, &hasSource); err != nil {
 		return err
 	}
 	if !hasRender && !hasSource {

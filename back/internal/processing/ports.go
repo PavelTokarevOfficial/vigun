@@ -13,6 +13,7 @@ type Downloader interface {
 }
 type MediaProcessor interface {
 	ExtractAudio(context.Context, string, string) error
+	Cut(context.Context, string, string, composition.Timeline, string) error
 	Render(context.Context, RenderInput) error
 }
 type Transcriber interface {

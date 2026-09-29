@@ -15,6 +15,7 @@ export type PipelineClip = {
   lastJobType: string
   lastJobStatus: string
   isReadyFragment: boolean
+  hasFragment: boolean
   editTimeline?: { segments: TimelineSegment[] }
 }
 
@@ -36,7 +37,7 @@ export type ProcessingJob = {
   clipId: string
   clipTitle: string
   type: string
-  status: 'pending' | 'running' | 'completed' | 'failed'
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'canceled'
   currentStep: string
   error: string
   progress: number

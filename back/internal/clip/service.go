@@ -33,6 +33,7 @@ type Local struct {
 	LastJobType     string                `json:"lastJobType"`
 	LastJobStatus   string                `json:"lastJobStatus"`
 	IsReadyFragment bool                  `json:"isReadyFragment"`
+	HasFragment     bool                  `json:"hasFragment"`
 	EditTimeline    *composition.Timeline `json:"editTimeline,omitempty"`
 }
 
@@ -40,7 +41,7 @@ func (s *Service) List(ctx context.Context) ([]Local, error) {
 	rows, e := s.db.Query(ctx, `SELECT c.id,c.streamer_id,s.display_name,c.title,c.twitch_clip_id,COALESCE(c.thumbnail_url,''),COALESCE(c.duration,0),
 		(EXISTS(SELECT 1 FROM media_files m WHERE m.clip_id=c.id AND m.type='source') OR c.source_video_id IS NOT NULL OR c.source_asset_id IS NOT NULL),c.status,COALESCE(c.error,''),
 		COALESCE(j.current_step,''),COALESCE(j.progress,0),COALESCE(j.type::text,''),COALESCE(j.status::text,''),
-		c.is_ready_fragment,c.edit_timeline
+		c.is_ready_fragment,EXISTS(SELECT 1 FROM clips child WHERE child.source_clip_id=c.id AND (child.is_ready_fragment OR child.status='rendering')),c.edit_timeline
 		FROM clips c JOIN streamers s ON s.id=c.streamer_id
 		LEFT JOIN LATERAL (SELECT current_step,progress,type,status FROM processing_jobs WHERE clip_id=c.id ORDER BY created_at DESC LIMIT 1) j ON true
 		ORDER BY c.created_at DESC`)
@@ -51,7 +52,7 @@ func (s *Service) List(ctx context.Context) ([]Local, error) {
 	out := []Local{}
 	for rows.Next() {
 		var x Local
-		if e = rows.Scan(&x.ID, &x.StreamerID, &x.StreamerName, &x.Title, &x.TwitchClipID, &x.ThumbnailURL, &x.Duration, &x.HasSource, &x.Status, &x.Error, &x.CurrentStep, &x.Progress, &x.LastJobType, &x.LastJobStatus, &x.IsReadyFragment, &x.EditTimeline); e != nil {
+		if e = rows.Scan(&x.ID, &x.StreamerID, &x.StreamerName, &x.Title, &x.TwitchClipID, &x.ThumbnailURL, &x.Duration, &x.HasSource, &x.Status, &x.Error, &x.CurrentStep, &x.Progress, &x.LastJobType, &x.LastJobStatus, &x.IsReadyFragment, &x.HasFragment, &x.EditTimeline); e != nil {
 			return nil, e
 		}
 		out = append(out, x)
@@ -63,16 +64,18 @@ func (s *Service) EnqueueDownload(ctx context.Context, id string) error {
 	e := s.db.QueryRow(ctx, `WITH queued AS (
 		INSERT INTO processing_jobs(clip_id,type)
 		SELECT c.id,'download' FROM clips c
-		WHERE c.id=$1 AND c.status='saved'
+		WHERE c.id=$1 AND c.status IN ('saved','downloaded','completed','failed')
+		AND c.source_video_id IS NULL AND c.source_asset_id IS NULL
+		AND NOT EXISTS (SELECT 1 FROM media_files m WHERE m.clip_id=c.id AND m.type='source')
 		AND NOT EXISTS (SELECT 1 FROM processing_jobs j WHERE j.clip_id=c.id AND j.type='download' AND j.status IN ('pending','running'))
 		ON CONFLICT DO NOTHING
 		RETURNING clip_id
 	)
 	UPDATE clips c SET status='downloading',error=NULL,updated_at=now()
 	FROM queued WHERE c.id=queued.clip_id
-	RETURNING c.id`, id).Scan(&jobID)
+		RETURNING c.id`, id).Scan(&jobID)
 	if e == pgx.ErrNoRows {
-		return fmt.Errorf("clip is not in favorites or already has an active download")
+		return fmt.Errorf("clip already has a source or an active download")
 	}
 	return e
 }
@@ -191,6 +194,34 @@ func (s *Service) UpdateFragment(ctx context.Context, id string, ready bool, tim
 	data, err := json.Marshal(timeline)
 	if err != nil {
 		return err
+	}
+	if ready {
+		if timeline == nil {
+			return fmt.Errorf("fragment timeline is required")
+		}
+		tx, err := s.db.Begin(ctx)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback(ctx)
+		var fragmentID string
+		err = tx.QueryRow(ctx, `INSERT INTO clips(streamer_id,twitch_clip_id,title,twitch_url,thumbnail_url,duration,twitch_created_at,status,is_ready_fragment,edit_timeline,source_clip_id)
+			SELECT streamer_id,'fragment:' || gen_random_uuid()::text,title || ' — фрагмент',twitch_url,thumbnail_url,
+				(SELECT COALESCE(SUM((segment->>'end')::double precision-(segment->>'start')::double precision),0) FROM jsonb_array_elements($2::jsonb->'segments') segment),
+				twitch_created_at,'rendering',false,$2,id
+			FROM clips WHERE id=$1
+			AND (EXISTS(SELECT 1 FROM media_files WHERE clip_id=$1 AND type='source') OR source_video_id IS NOT NULL OR source_asset_id IS NOT NULL)
+			RETURNING id`, id, data).Scan(&fragmentID)
+		if err == pgx.ErrNoRows {
+			return fmt.Errorf("source clip is not available")
+		}
+		if err != nil {
+			return err
+		}
+		if _, err = tx.Exec(ctx, `INSERT INTO processing_jobs(clip_id,type) VALUES($1,'fragment')`, fragmentID); err != nil {
+			return err
+		}
+		return tx.Commit(ctx)
 	}
 	command, err := s.db.Exec(ctx, `UPDATE clips SET is_ready_fragment=$2,edit_timeline=$3,updated_at=now()
 		WHERE id=$1 AND status IN ('downloaded','completed')

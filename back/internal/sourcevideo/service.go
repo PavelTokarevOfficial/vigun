@@ -77,7 +77,7 @@ func (s *Service) List(ctx context.Context) (Library, error) {
 		return result, nil
 	}
 	rows, err = s.db.Query(ctx, `SELECT a.id,a.folder_id,a.name,a.mime_type,a.size,COALESCE((a.metadata->>'duration')::double precision,0),a.storage_key,a.created_at,COUNT(c.id)
-		FROM assets a LEFT JOIN clips c ON c.source_asset_id=a.id WHERE a.folder_id=$1 AND a.kind='video' GROUP BY a.id ORDER BY a.created_at DESC`, *result.FolderID)
+		FROM assets a LEFT JOIN clips c ON c.origin_asset_id=a.id WHERE a.folder_id=$1 AND a.kind='video' GROUP BY a.id ORDER BY a.created_at DESC`, *result.FolderID)
 	if err != nil {
 		return result, err
 	}
@@ -264,8 +264,23 @@ func (s *Service) CreateCut(ctx context.Context, assetID, title string, timeline
 		return "", err
 	}
 	var created string
-	err = s.db.QueryRow(ctx, `INSERT INTO clips(id,streamer_id,twitch_clip_id,title,twitch_url,duration,status,is_ready_fragment,edit_timeline,source_asset_id) VALUES($1,$2,$3,$4,'',$5,'downloaded',true,$6,$7) RETURNING id`, id, systemStreamerID, "library:"+id, title, duration, raw, assetID).Scan(&created)
-	return created, err
+	outputDuration := 0.0
+	for _, segment := range timeline.Segments {
+		outputDuration += segment.End - segment.Start
+	}
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback(ctx)
+	err = tx.QueryRow(ctx, `INSERT INTO clips(id,streamer_id,twitch_clip_id,title,twitch_url,duration,status,is_ready_fragment,edit_timeline,source_asset_id,origin_asset_id) VALUES($1,$2,$3,$4,'',$5,'rendering',false,$6,$7,$7) RETURNING id`, id, systemStreamerID, "library:"+id, title, outputDuration, raw, assetID).Scan(&created)
+	if err != nil {
+		return "", err
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO processing_jobs(clip_id,type) VALUES($1,'fragment')`, created); err != nil {
+		return "", err
+	}
+	return created, tx.Commit(ctx)
 }
 
 func cleanName(v string) string {

@@ -262,7 +262,7 @@ export function useSourceVideoLibrary() {
         'Не удалось сохранить фрагмент',
       )
       video.cuts += 1
-      savedMessage.value = `Фрагмент ${segment.start.toFixed(1)}–${segment.end.toFixed(1)} сек. добавлен в Pipeline`
+      savedMessage.value = `Фрагмент ${segment.start.toFixed(1)}–${segment.end.toFixed(1)} сек. отправлен на создание. Прогресс виден в Pipeline.`
       selectedSegmentID.value = null
       title.value = `${video.name.replace(/\.[^.]+$/, '')} — фрагмент ${video.cuts + 1}`
       await load()

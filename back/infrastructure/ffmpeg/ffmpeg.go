@@ -17,12 +17,53 @@ func New(bin string) *Adapter { return &Adapter{bin} }
 func (a *Adapter) run(ctx context.Context, args ...string) error {
 	out, e := exec.CommandContext(ctx, a.Bin, args...).CombinedOutput()
 	if e != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		return fmt.Errorf("ffmpeg: %w: %s", e, string(out))
 	}
 	return nil
 }
 func (a *Adapter) ExtractAudio(ctx context.Context, source, out string) error {
 	return a.run(ctx, "-y", "-i", source, "-ar", "16000", "-ac", "1", out)
+}
+func (a *Adapter) Cut(ctx context.Context, source, out string, timeline composition.Timeline, preset string) error {
+	if len(timeline.Segments) == 0 {
+		return fmt.Errorf("fragment timeline is empty")
+	}
+	hasAudio, err := a.hasAudioStream(ctx, source)
+	if err != nil {
+		return err
+	}
+	args := []string{"-y"}
+	for _, segment := range timeline.Segments {
+		duration := segment.End - segment.Start
+		if segment.Start < 0 || duration <= 0 {
+			return fmt.Errorf("fragment segment %s is invalid", segment.ID)
+		}
+		args = append(args, "-ss", fmt.Sprintf("%g", segment.Start), "-t", fmt.Sprintf("%g", duration), "-i", source)
+	}
+	filters := make([]string, 0, len(timeline.Segments)*2+2)
+	videoInputs := strings.Builder{}
+	audioInputs := strings.Builder{}
+	for index := range timeline.Segments {
+		filters = append(filters, fmt.Sprintf("[%d:v]setpts=PTS-STARTPTS[v%d]", index, index))
+		videoInputs.WriteString(fmt.Sprintf("[v%d]", index))
+		if hasAudio {
+			filters = append(filters, fmt.Sprintf("[%d:a]asetpts=PTS-STARTPTS[a%d]", index, index))
+			audioInputs.WriteString(fmt.Sprintf("[a%d]", index))
+		}
+	}
+	filters = append(filters, fmt.Sprintf("%sconcat=n=%d:v=1:a=0[vout]", videoInputs.String(), len(timeline.Segments)))
+	if hasAudio {
+		filters = append(filters, fmt.Sprintf("%sconcat=n=%d:v=0:a=1[aout]", audioInputs.String(), len(timeline.Segments)))
+	}
+	args = append(args, "-filter_complex", strings.Join(filters, ";"), "-map", "[vout]")
+	if hasAudio {
+		args = append(args, "-map", "[aout]", "-c:a", "aac")
+	}
+	args = append(args, "-c:v", "libx264", "-threads", "2", "-pix_fmt", "yuv420p", "-preset", preset, "-crf", "20", "-movflags", "+faststart", out)
+	return a.run(ctx, args...)
 }
 func (a *Adapter) Render(ctx context.Context, in processing.RenderInput) error {
 	config := in.Composition

@@ -19,21 +19,28 @@ export function usePipelineBoard() {
   const queuedProcessIDs = ref(new Set<string>())
 
   const downloaded = computed(() =>
-    clips.value.filter(
-      (clip) =>
-        !clip.isReadyFragment &&
-        (clip.hasSource ||
-          ['saved', 'downloading'].includes(clip.status) ||
-          clip.status === 'failed'),
-    ),
+    clips.value
+      .filter((clip) => !clip.isReadyFragment && clip.lastJobType !== 'fragment')
+      .sort((left, right) => Number(left.hasFragment) - Number(right.hasFragment)),
   )
   const readyFragments = computed(() =>
     clips.value.filter((clip) => clip.isReadyFragment && clip.hasSource),
   )
   const renderJobs = computed(() =>
     jobs.value
-      .filter((job) => job.type === 'process' && job.status !== 'completed')
+      .filter(
+        (job) =>
+          job.type === 'process' &&
+          !['completed', 'canceled'].includes(job.status),
+      )
       .slice(0, 6),
+  )
+  const fragmentJobs = computed(() =>
+    jobs.value.filter(
+      (job) =>
+        job.type === 'fragment' &&
+        ['pending', 'running', 'failed'].includes(job.status),
+    ),
   )
   const usedFragmentIDs = computed(() => {
     const ids = new Set<string>()
@@ -122,7 +129,21 @@ export function usePipelineBoard() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         ready,
-        timeline: segments?.length ? { segments } : null,
+        timeline: ready
+          ? {
+              segments: segments?.length
+                ? segments
+                : [
+                    {
+                      id: `fragment-${crypto.randomUUID().slice(0, 8)}`,
+                      source: 'clip',
+                      start: 0,
+                      end: Math.max(0.1, clip.duration),
+                      sourceDuration: Math.max(0.1, clip.duration),
+                    },
+                  ],
+            }
+          : null,
       }),
     })
     if (!response.ok) {
@@ -159,6 +180,17 @@ export function usePipelineBoard() {
     await load()
   }
 
+  async function cancelJob(id: string) {
+    busy.value = id
+    error.value = ''
+    const response = await fetch(`/api/jobs/${id}/cancel`, { method: 'POST' })
+    if (!response.ok) {
+      error.value = await readError(response, 'Не удалось остановить обработку')
+    }
+    busy.value = ''
+    await load()
+  }
+
   function isProcessQueued(clip: PipelineClip) {
     return (
       queuedProcessIDs.value.has(clip.id) ||
@@ -174,22 +206,51 @@ export function usePipelineBoard() {
     )
   }
 
+  function processingStepLabel(step: string) {
+    const labels: Record<string, string> = {
+      processing_queued: 'Запуск обработки',
+      preparing_source: 'Подготовка исходного видео',
+      extracting_audio: 'Извлечение аудио для субтитров',
+      transcribing: 'Whisper распознаёт речь',
+      preparing_render_with_subtitles: 'Подготовка рендера · субтитры готовы',
+      preparing_render_without_subtitles:
+        'Подготовка рендера · Whisper пропущен',
+      rendering_with_subtitles: 'Рендеринг видео · с субтитрами',
+      rendering_without_subtitles: 'Рендеринг видео · без субтитров',
+      saving_render: 'Сохранение готового видео',
+      saving_result: 'Завершение обработки',
+      preparing_fragment_source: 'Подготовка исходника фрагмента',
+      copying_fragment: 'Копирование видео без перекодирования',
+      rendering_fragment: 'Создание видеофрагмента',
+      saving_fragment: 'Сохранение видеофрагмента',
+      canceled: 'Остановлено',
+      completed: 'Готово',
+    }
+    return labels[step] || step || 'Запуск обработки'
+  }
+
   function statusText(clip: PipelineClip) {
+    if (!clip.hasSource && clip.status === 'downloading') {
+      return 'Скачивание исходного видео'
+    }
+    if (!clip.hasSource) return 'Исходный файл отсутствует'
     if (clip.status === 'saved') return 'Ожидает скачивания'
     if (isProcessQueued(clip)) {
       return clip.lastJobStatus === 'running'
-        ? `${clip.currentStep || 'Запуск обработки'} · ${clip.progress}%`
+        ? `${processingStepLabel(clip.currentStep)} · ${clip.progress}%`
         : 'В очереди на обработку'
     }
     if (clip.status === 'downloaded') return 'Готов к обработке'
     if (clip.status === 'completed') return 'Есть готовый рендер'
     if (clip.status === 'failed') return 'Ошибка'
-    return `${clip.currentStep || clip.status} · ${clip.progress}%`
+    return `${processingStepLabel(clip.currentStep || clip.status)} · ${clip.progress}%`
   }
 
   function renderJobStatus(job: ProcessingJob) {
     if (job.status === 'pending') return 'В очереди'
-    if (job.status === 'running') return `Рендерится · ${job.progress}%`
+    if (job.status === 'running') {
+      return `${processingStepLabel(job.currentStep)} · ${job.progress}%`
+    }
     if (job.status === 'completed') return 'Готово'
     return 'Ошибка'
   }
@@ -209,6 +270,7 @@ export function usePipelineBoard() {
     busy,
     downloaded,
     readyFragments,
+    fragmentJobs,
     renderJobs,
     usedFragmentIDs,
     load,
@@ -216,6 +278,7 @@ export function usePipelineBoard() {
     updateFragment,
     removeClip,
     removeRenderedVideo,
+    cancelJob,
     isProcessQueued,
     canDelete,
     statusText,

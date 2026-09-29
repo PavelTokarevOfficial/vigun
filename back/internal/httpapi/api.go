@@ -103,6 +103,7 @@ func (a *API) Router() http.Handler {
 	r.Post("/api/clips/{id}/retry", a.retry)
 	r.Get("/api/jobs", a.listJobs)
 	r.Get("/api/jobs/{id}", a.getJob)
+	r.Post("/api/jobs/{id}/cancel", a.cancelJob)
 	r.Get("/api/videos", a.readyVideos)
 	r.Get("/api/videos/{id}/download", a.downloadVideo)
 	r.Get("/api/videos/{id}/content", a.streamVideo)
@@ -220,6 +221,13 @@ func (a *API) getJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	write(w, 200, map[string]any{"data": x})
+}
+func (a *API) cancelJob(w http.ResponseWriter, r *http.Request) {
+	if err := a.jobs.Cancel(r.Context(), chi.URLParam(r, "id")); err != nil {
+		fail(w, 422, err)
+		return
+	}
+	write(w, 202, map[string]string{"status": "canceling"})
 }
 func (a *API) readyVideos(w http.ResponseWriter, r *http.Request) {
 	x, e := a.videos.List(r.Context())

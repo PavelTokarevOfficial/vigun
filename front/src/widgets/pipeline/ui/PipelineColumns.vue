@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import {
-  ArrowLeft,
   Check,
   Download,
   ExternalLink,
@@ -21,6 +20,7 @@ const {
   action,
   busy,
   canDelete,
+  cancelJob,
   downloaded,
   isProcessQueued,
   openClipPreview,
@@ -29,6 +29,7 @@ const {
   openRenderedVideo,
   openTemplateChooser,
   readyFragments,
+  fragmentJobs,
   remove,
   removeRenderedVideo,
   selectedTrainClipIDs,
@@ -51,9 +52,9 @@ function toggleTrainSelection() {
 </script>
 
 <template>
-  <div class="mt-6 grid gap-4 xl:grid-cols-4">
+  <div class="mt-6 grid gap-4 xl:grid-cols-4 xl:gap-8">
     <section class="min-w-0">
-      <h3 class="font-semibold">Скачанные · {{ downloaded.length }}</h3>
+      <h3 class="min-h-10 font-semibold">Скачанные · {{ downloaded.length }}</h3>
       <div class="mt-3 space-y-3">
         <p v-if="!downloaded.length" class="text-sm text-slate-500">
           Пока пусто.
@@ -68,19 +69,29 @@ function toggleTrainSelection() {
             :src="clip.thumbnailUrl"
             :alt="`Превью клипа: ${clip.title}`"
             class="aspect-video w-full object-cover"
+            :class="clip.hasFragment ? 'brightness-50' : ''"
             draggable="false"
           >
           <div
             v-else
             class="grid aspect-video w-full place-content-center bg-gradient-to-br from-violet-700 to-slate-900 text-white"
+            :class="clip.hasFragment ? 'brightness-50' : ''"
           >
             <Film class="size-10 opacity-70" />
           </div>
 
-          <div
-            class="absolute top-0 px-3 py-1 text-white [-webkit-text-stroke:2px_black] [paint-order:stroke_fill]"
+          <span
+            v-if="clip.hasFragment"
+            class="absolute top-3 right-3 grid size-7 place-content-center rounded-full bg-emerald-500 text-white shadow"
+            title="Из исходника уже создан фрагмент"
           >
-            <b>{{ clip.title }}</b>
+            <Check :size="17" :stroke-width="3" />
+          </span>
+
+          <div
+            class="absolute inset-x-0 top-0 min-w-0 px-3 py-1 pr-12 text-white [-webkit-text-stroke:2px_black] [paint-order:stroke_fill]"
+          >
+            <b class="block truncate" :title="clip.title">{{ clip.title }}</b>
             <p>{{ clip.streamerName }} · {{ statusText(clip) }}</p>
             <p v-if="clip.error" class="mt-1 text-sm text-red-600">
               {{ clip.error }}
@@ -88,6 +99,16 @@ function toggleTrainSelection() {
           </div>
 
           <div class="absolute right-0 bottom-0 flex gap-2 p-3">
+            <AppButton
+              v-if="!clip.hasSource && !['pending', 'running'].includes(clip.lastJobStatus)"
+              class="grid h-8 w-8 place-content-center"
+              :disabled="busy === clip.id"
+              title="Скачать исходное видео заново"
+              :aria-label="`Скачать исходное видео «${clip.title}» заново`"
+              @click="action(clip.id, 'download')"
+            >
+              <Download :size="16" />
+            </AppButton>
             <AppButton
               v-if="clip.hasSource"
               class="grid h-8 w-8 place-content-center"
@@ -99,7 +120,7 @@ function toggleTrainSelection() {
               <Play :size="16" />
             </AppButton>
             <AppButton
-              v-if="['downloaded', 'completed'].includes(clip.status) && !isProcessQueued(clip)"
+              v-if="clip.hasSource && ['downloaded', 'completed'].includes(clip.status) && !isProcessQueued(clip)"
               :disabled="busy === clip.id"
               class="grid place-content-center w-8 h-8"
               title="Обрезать и подготовить фрагмент"
@@ -138,9 +159,11 @@ function toggleTrainSelection() {
       </div>
     </section>
 
-    <section class="xl:border-l xl:border-dashed xl:border-slate-300 xl:pl-4">
+    <section
+      class="relative min-w-0 xl:before:absolute xl:before:inset-y-0 xl:before:-left-4 xl:before:border-l xl:before:border-dashed xl:before:border-slate-300 xl:before:content-['']"
+    >
       <div class="flex items-center justify-between gap-2">
-        <h3 class="font-semibold">Фрагменты · {{ readyFragments.length }}</h3>
+        <h3 class="min-h-10 font-semibold">Фрагменты · {{ readyFragments.length }}</h3>
         <div class="flex items-center gap-2">
           <button
             v-if="trainSelectionMode && selectedTrainClipIDs.size >= 2"
@@ -164,9 +187,42 @@ function toggleTrainSelection() {
         </div>
       </div>
       <div class="mt-3 space-y-3">
-        <p v-if="!readyFragments.length" class="text-sm text-slate-500">
+        <p v-if="!readyFragments.length && !fragmentJobs.length" class="text-sm text-slate-500">
           Пока пусто.
         </p>
+        <article
+          v-for="job in fragmentJobs"
+          :key="`fragment-job-${job.id}`"
+          class="relative overflow-hidden rounded-xl border border-violet-200 bg-violet-50"
+        >
+          <div class="grid aspect-video w-full place-content-center bg-gradient-to-br from-violet-100 to-slate-200 px-4 text-center">
+            <span class="block max-w-full truncate text-sm font-semibold text-violet-800" :title="job.clipTitle || 'Новый фрагмент'">{{ job.clipTitle || 'Новый фрагмент' }}</span>
+          </div>
+          <div class="absolute inset-x-0 top-0 p-3 text-slate-900">
+            <b>Создание фрагмента</b>
+            <p class="text-xs">{{ renderJobStatus(job) }}</p>
+          </div>
+          <div class="absolute inset-x-3 bottom-3 flex items-end gap-2">
+            <div class="min-w-0 flex-1">
+              <div class="h-1.5 overflow-hidden rounded-full bg-white/80">
+                <div
+                  class="h-full rounded-full bg-violet-600 transition-all"
+                  :style="{ width: `${Math.max(job.status === 'pending' ? 4 : job.progress, 4)}%` }"
+                />
+              </div>
+            </div>
+            <AppButton
+              v-if="['pending', 'running'].includes(job.status)"
+              variant="danger"
+              class="grid size-8 place-content-center"
+              :disabled="busy === job.id"
+              title="Остановить создание фрагмента"
+              @click="cancelJob(job.id)"
+            >
+              <X :size="16" />
+            </AppButton>
+          </div>
+        </article>
         <article
           v-for="clip in readyFragments"
           :key="clip.id"
@@ -194,9 +250,9 @@ function toggleTrainSelection() {
             <Film class="size-10 opacity-70" />
           </div>
           <div
-            class="absolute top-0 px-3 py-1 text-white [-webkit-text-stroke:2px_black] [paint-order:stroke_fill]"
+            class="absolute inset-x-0 top-0 min-w-0 px-3 py-1 pr-12 text-white [-webkit-text-stroke:2px_black] [paint-order:stroke_fill]"
           >
-            <b>{{ clip.title }}</b>
+            <b class="block truncate" :title="clip.title">{{ clip.title }}</b>
             <p>{{ clip.streamerName }}</p>
           </div>
           <span
@@ -237,10 +293,10 @@ function toggleTrainSelection() {
             <AppButton
               variant="secondary"
               class="grid h-8 w-8 place-content-center"
-              title="Вернуть в скачанные"
-              @click.stop="updateFragment(clip, false)"
+              title="Удалить фрагмент"
+              @click.stop="remove(clip)"
             >
-              <ArrowLeft :size="16" />
+              <Trash :size="16" />
             </AppButton>
           </div>
         </article>
@@ -248,10 +304,10 @@ function toggleTrainSelection() {
     </section>
 
     <section
-      class="col-span-2 xl:border-l xl:border-dashed xl:border-slate-300 xl:pl-4"
+      class="relative min-w-0 xl:col-span-2 xl:before:absolute xl:before:inset-y-0 xl:before:-left-4 xl:before:border-l xl:before:border-dashed xl:before:border-slate-300 xl:before:content-['']"
     >
-      <h3 class="font-semibold">Готовые · {{ videos.length }}</h3>
-      <div class="grid grid-cols-2 gap-3 mt-3">
+      <h3 class="min-h-10 font-semibold">Готовые · {{ videos.length }}</h3>
+      <div class="grid xl:grid-cols-2 gap-4 xl:gap-8 mt-3">
         <p
           v-if="!videos.length && !renderJobs.length"
           class="text-sm text-slate-500"
@@ -266,7 +322,7 @@ function toggleTrainSelection() {
           <div
             class="grid aspect-video w-full place-content-center bg-gradient-to-br from-violet-100 to-slate-200"
           >
-            <span class="text-sm font-semibold text-violet-800">
+            <span class="block max-w-full truncate px-3 text-sm font-semibold text-violet-800" :title="job.isTrain ? `Паровозик · ${job.fragmentCount} фрагм.` : (job.clipTitle || 'Видео')">
               <template v-if="job.isTrain">
                 Паровозик · {{ job.fragmentCount }} фрагм.
               </template>
@@ -276,23 +332,35 @@ function toggleTrainSelection() {
             </span>
           </div>
           <div class="absolute inset-x-0 top-0 p-3 text-slate-900">
-            <b>{{ job.templateName || 'Рендер видео' }}</b>
+            <b class="block truncate" :title="job.templateName || 'Рендер видео'">{{ job.templateName || 'Рендер видео' }}</b>
             <p class="text-xs">{{ renderJobStatus(job) }}</p>
           </div>
-          <div class="absolute inset-x-3 bottom-3">
-            <div class="h-1.5 overflow-hidden rounded-full bg-white/80">
-              <div
-                class="h-full rounded-full bg-violet-600 transition-all"
-                :class="renderJobStatusClass(job)"
-                :style="{ width: `${Math.max(job.status === 'pending' ? 4 : job.progress, 4)}%` }"
-              />
+          <div class="absolute inset-x-3 bottom-3 flex items-end gap-2">
+            <div class="min-w-0 flex-1">
+              <div class="h-1.5 overflow-hidden rounded-full bg-white/80">
+                <div
+                  class="h-full rounded-full bg-violet-600 transition-all"
+                  :class="renderJobStatusClass(job)"
+                  :style="{ width: `${Math.max(job.status === 'pending' ? 4 : job.progress, 4)}%` }"
+                />
+              </div>
+              <p
+                v-if="job.status === 'failed' && job.error"
+                class="mt-1 line-clamp-1 text-xs text-red-700"
+              >
+                {{ job.error.split('\n')[0] }}
+              </p>
             </div>
-            <p
-              v-if="job.status === 'failed' && job.error"
-              class="mt-1 line-clamp-1 text-xs text-red-700"
+            <AppButton
+              v-if="['pending', 'running'].includes(job.status)"
+              variant="danger"
+              class="grid size-8 place-content-center"
+              :disabled="busy === job.id"
+              title="Остановить рендер"
+              @click="cancelJob(job.id)"
             >
-              {{ job.error.split('\n')[0] }}
-            </p>
+              <X :size="16" />
+            </AppButton>
           </div>
         </article>
         <article
@@ -315,9 +383,9 @@ function toggleTrainSelection() {
           </div>
 
           <div
-            class="absolute top-0 px-3 py-1 text-white [-webkit-text-stroke:2px_black] [paint-order:stroke_fill]"
+            class="absolute inset-x-0 top-0 min-w-0 px-3 py-1 text-white [-webkit-text-stroke:2px_black] [paint-order:stroke_fill]"
           >
-            <b>{{ video.title }}</b>
+            <b class="block truncate" :title="video.title">{{ video.title }}</b>
             <p>
               {{ video.streamer }}
               <template v-if="video.templateName">

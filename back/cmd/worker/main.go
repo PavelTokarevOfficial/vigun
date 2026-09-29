@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/finde-clip/finde-v2/back/infrastructure/browser"
 	"github.com/finde-clip/finde-v2/back/infrastructure/ffmpeg"
 	"github.com/finde-clip/finde-v2/back/infrastructure/storage"
 	"github.com/finde-clip/finde-v2/back/infrastructure/whisper"
+	"github.com/finde-clip/finde-v2/back/internal/composition"
 	"github.com/finde-clip/finde-v2/back/internal/config"
 	"github.com/finde-clip/finde-v2/back/internal/media"
 	"github.com/finde-clip/finde-v2/back/internal/platform/db"
@@ -73,14 +75,25 @@ func main() {
 			}
 			started := time.Now()
 			log.Info("job started", "job_id", job.ID, "clip_id", job.ClipID, "type", job.Type)
-			e = run(ctx, log, jobs, files, runner, store, down, cfg, job)
+			jobCtx, cancelJob := context.WithCancel(ctx)
+			monitorDone := make(chan struct{})
+			go monitorCancellation(jobCtx, jobs, job.ID, cancelJob, monitorDone)
+			e = run(jobCtx, log, jobs, files, runner, store, down, cfg, job)
+			close(monitorDone)
+			cancelJob()
 			if e != nil {
 				if errors.Is(e, context.Canceled) {
-					shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
-					_ = jobs.Requeue(shutdownCtx, job.ID)
-					shutdownCancel()
-					log.Warn("job requeued during shutdown", "job_id", job.ID, "clip_id", job.ClipID)
-					return
+					controlCtx, controlCancel := context.WithTimeout(context.Background(), 5*time.Second)
+					if ctx.Err() != nil {
+						_ = jobs.Requeue(controlCtx, job.ID)
+						controlCancel()
+						log.Warn("job requeued during shutdown", "job_id", job.ID, "clip_id", job.ClipID)
+						return
+					}
+					_ = jobs.MarkCanceled(controlCtx, job.ID, job.ClipID, job.Type)
+					controlCancel()
+					log.Info("job canceled", "job_id", job.ID, "clip_id", job.ClipID)
+					continue
 				}
 				_ = jobs.Fail(ctx, job.ID, job.ClipID, e.Error())
 				log.Error("job failed", "job_id", job.ID, "error", e)
@@ -89,12 +102,36 @@ func main() {
 				if job.Type == "download" {
 					clipStatus = "downloaded"
 				}
-				_ = jobs.Complete(ctx, job.ID, job.ClipID, clipStatus)
+				if job.Type == "fragment" {
+					_ = jobs.CompleteFragment(ctx, job.ID, job.ClipID)
+				} else {
+					_ = jobs.Complete(ctx, job.ID, job.ClipID, clipStatus)
+				}
 				log.Info("job completed", "job_id", job.ID, "duration", time.Since(started).String())
 			}
 		}
 	}
 }
+
+func monitorCancellation(ctx context.Context, jobs *processing.Jobs, jobID string, cancel context.CancelFunc, done <-chan struct{}) {
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-done:
+			return
+		case <-ticker.C:
+			requested, err := jobs.CancelRequested(ctx, jobID)
+			if err == nil && requested {
+				cancel()
+				return
+			}
+		}
+	}
+}
+
 func run(ctx context.Context, log *slog.Logger, j *processing.Jobs, files *media.Files, r *processing.Runner, s *storage.S3, d *browser.RodDownloader, cfg config.Config, job processing.ClaimedJob) error {
 	if job.Type == "download" {
 		log.Info("job step", "job_id", job.ID, "clip_id", job.ClipID, "step", "download", "progress", 10)
@@ -117,13 +154,27 @@ func run(ctx context.Context, log *slog.Logger, j *processing.Jobs, files *media
 		}
 		return j.Step(ctx, job.ID, job.ClipID, "downloaded", "downloaded", 100)
 	}
+	if job.Type == "fragment" {
+		var timeline composition.Timeline
+		if len(job.Timeline) == 0 || json.Unmarshal(job.Timeline, &timeline) != nil {
+			return fmt.Errorf("fragment timeline is invalid")
+		}
+		out, err := r.CreateFragment(ctx, processing.Input{JobID: job.ID, ClipID: job.ClipID, SourceKey: job.SourceKey, Preset: cfg.FFmpegPreset, Progress: func(step, status string, percent int) error {
+			log.Info("job step", "job_id", job.ID, "clip_id", job.ClipID, "step", step, "progress", percent)
+			return j.Step(ctx, job.ID, job.ClipID, step, status, percent)
+		}}, timeline)
+		if err != nil {
+			return err
+		}
+		return record(ctx, files, s, job.ClipID, job.ID, "source", out.SourceKey, "video/mp4")
+	}
 	if job.Type != "process" {
 		return fmt.Errorf("unknown job type %s", job.Type)
 	}
-	if e := j.Step(ctx, job.ID, job.ClipID, "processing_queued", "downloaded", 20); e != nil {
+	if e := j.Step(ctx, job.ID, job.ClipID, "processing_queued", "downloaded", 2); e != nil {
 		return e
 	}
-	log.Info("job step", "job_id", job.ID, "clip_id", job.ClipID, "step", "processing_queued", "progress", 20)
+	log.Info("job step", "job_id", job.ID, "clip_id", job.ClipID, "step", "processing_queued", "progress", 2)
 	out, e := r.Process(ctx, processing.Input{JobID: job.ID, ClipID: job.ClipID, ClipURL: job.ClipURL, SourceKey: job.SourceKey, Width: cfg.OutputWidth, Height: cfg.OutputHeight, Blur: cfg.BackgroundBlur, Preset: cfg.FFmpegPreset, TemplateSnapshot: job.TemplateSnapshot, Progress: func(step, status string, percent int) error {
 		log.Info("job step", "job_id", job.ID, "clip_id", job.ClipID, "step", step, "progress", percent)
 		return j.Step(ctx, job.ID, job.ClipID, step, status, percent)
@@ -132,12 +183,15 @@ func run(ctx context.Context, log *slog.Logger, j *processing.Jobs, files *media
 		return e
 	}
 	for _, x := range []struct{ kind, key, mime string }{{"audio", out.AudioKey, "audio/wav"}, {"subtitle", out.SubtitleKey, "application/x-subrip"}, {"render", out.RenderKey, "video/mp4"}} {
+		if x.key == "" {
+			continue
+		}
 		if e = record(ctx, files, s, job.ClipID, job.ID, x.kind, x.key, x.mime); e != nil {
 			return e
 		}
 	}
-	log.Info("job step", "job_id", job.ID, "clip_id", job.ClipID, "step", "rendered", "progress", 90)
-	return j.Step(ctx, job.ID, job.ClipID, "rendered", "rendering", 90)
+	log.Info("job step", "job_id", job.ID, "clip_id", job.ClipID, "step", "saving_result", "progress", 95)
+	return j.Step(ctx, job.ID, job.ClipID, "saving_result", "rendering", 95)
 }
 func record(ctx context.Context, f *media.Files, s *storage.S3, clipID, jobID, kind, key, mime string) error {
 	o, e := s.Get(ctx, key)

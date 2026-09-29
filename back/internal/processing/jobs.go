@@ -3,6 +3,7 @@ package processing
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -12,6 +13,7 @@ type ClaimedJob struct {
 	ID, ClipID, Type, ClipURL string
 	SourceKey                 string
 	TemplateSnapshot          []byte
+	Timeline                  []byte
 }
 type Jobs struct{ db *pgxpool.Pool }
 
@@ -96,8 +98,17 @@ func (j *Jobs) Claim(ctx context.Context) (ClaimedJob, error) {
 		UPDATE processing_jobs j SET status='running',attempts=attempts+1,started_at=now(),updated_at=now()
 		FROM next JOIN clips c ON c.id=next.clip_id
 		WHERE j.id=next.id
-		RETURNING j.id,j.clip_id,j.type,c.twitch_url,j.template_snapshot,
-		COALESCE((SELECT storage_key FROM source_videos WHERE id=c.source_video_id),(SELECT storage_key FROM assets WHERE id=c.source_asset_id),'')`).Scan(&x.ID, &x.ClipID, &x.Type, &x.ClipURL, &x.TemplateSnapshot, &x.SourceKey)
+		RETURNING j.id,j.clip_id,j.type,c.twitch_url,j.template_snapshot,c.edit_timeline,
+		COALESCE(
+			(SELECT storage_key FROM media_files WHERE clip_id=c.id AND type='source' ORDER BY created_at DESC LIMIT 1),
+			(SELECT storage_key FROM source_videos WHERE id=c.source_video_id),
+			(SELECT storage_key FROM assets WHERE id=c.source_asset_id),
+			(SELECT COALESCE(m.storage_key,v.storage_key,a.storage_key) FROM clips parent
+			 LEFT JOIN LATERAL (SELECT storage_key FROM media_files WHERE clip_id=parent.id AND type='source' ORDER BY created_at DESC LIMIT 1) m ON true
+			 LEFT JOIN source_videos v ON v.id=parent.source_video_id
+			 LEFT JOIN assets a ON a.id=parent.source_asset_id
+			 WHERE parent.id=c.source_clip_id),
+			'')`).Scan(&x.ID, &x.ClipID, &x.Type, &x.ClipURL, &x.TemplateSnapshot, &x.Timeline, &x.SourceKey)
 	return x, e
 }
 func (j *Jobs) Step(ctx context.Context, id, clipID, step, status string, progress int) error {
@@ -115,6 +126,74 @@ func (j *Jobs) Complete(ctx context.Context, id, clipID, clipStatus string) erro
 	}
 	_, e = j.db.Exec(ctx, "UPDATE clips SET status=$2,updated_at=now() WHERE id=$1", clipID, clipStatus)
 	return e
+}
+
+func (j *Jobs) CompleteFragment(ctx context.Context, id, clipID string) error {
+	tx, err := j.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err = tx.Exec(ctx, "UPDATE processing_jobs SET status='completed',current_step='completed',progress=100,finished_at=now(),updated_at=now() WHERE id=$1", id); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(ctx, `UPDATE clips SET status='downloaded',is_ready_fragment=true,source_video_id=NULL,source_asset_id=NULL,error=NULL,updated_at=now() WHERE id=$1`, clipID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func (j *Jobs) Cancel(ctx context.Context, id string) error {
+	command, err := j.db.Exec(ctx, `UPDATE processing_jobs SET
+		cancel_requested=true,
+		status=CASE WHEN status='pending' THEN 'canceled'::job_status ELSE status END,
+		current_step=CASE WHEN status='pending' THEN 'canceled' ELSE current_step END,
+		finished_at=CASE WHEN status='pending' THEN now() ELSE finished_at END,
+		updated_at=now()
+		WHERE id=$1 AND status IN ('pending','running')`, id)
+	if err != nil {
+		return err
+	}
+	if command.RowsAffected() == 0 {
+		return fmt.Errorf("active job not found")
+	}
+	_, err = j.db.Exec(ctx, `DELETE FROM clips c USING processing_jobs job
+		WHERE job.id=$1 AND job.clip_id=c.id AND job.type='fragment' AND job.status='canceled' AND c.is_ready_fragment=false`, id)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (j *Jobs) CancelRequested(ctx context.Context, id string) (bool, error) {
+	var canceled bool
+	err := j.db.QueryRow(ctx, `SELECT cancel_requested OR status='canceled' FROM processing_jobs WHERE id=$1`, id).Scan(&canceled)
+	return canceled, err
+}
+
+func (j *Jobs) MarkCanceled(ctx context.Context, id, clipID, jobType string) error {
+	tx, err := j.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err = tx.Exec(ctx, `UPDATE processing_jobs SET status='canceled',current_step='canceled',finished_at=now(),updated_at=now() WHERE id=$1`, id); err != nil {
+		return err
+	}
+	if jobType == "fragment" {
+		if _, err = tx.Exec(ctx, `DELETE FROM clips WHERE id=$1 AND is_ready_fragment=false`, clipID); err != nil {
+			return err
+		}
+	} else if jobType == "download" {
+		if _, err = tx.Exec(ctx, `UPDATE clips SET status='saved',error=NULL,updated_at=now() WHERE id=$1`, clipID); err != nil {
+			return err
+		}
+	} else {
+		if _, err = tx.Exec(ctx, `UPDATE clips SET status='downloaded',error=NULL,updated_at=now() WHERE id=$1`, clipID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
 }
 func (j *Jobs) Fail(ctx context.Context, id, clipID, msg string) error {
 	_, e := j.db.Exec(ctx, "UPDATE processing_jobs SET status='failed',error=$2,finished_at=now(),updated_at=now() WHERE id=$1", id, msg)
