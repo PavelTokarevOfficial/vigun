@@ -309,9 +309,9 @@ function toggleTrainSelection() {
           >
           <div
             v-else
-            class="grid aspect-video w-full place-content-center bg-slate-100 text-sm text-slate-500"
+            class="grid aspect-video w-full place-content-center bg-gradient-to-br from-violet-700 to-slate-900 text-white"
           >
-            Нет превью
+            <Film class="size-10 opacity-70" />
           </div>
 
           <div
