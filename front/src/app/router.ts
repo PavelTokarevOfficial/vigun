@@ -25,6 +25,10 @@ export default createRouter({
     },
     { path: '/clips', redirect: '/search/clips' },
     { path: '/pipeline', component: () => import('../pages/PipelinePage.vue') },
+    {
+      path: '/source-videos',
+      component: () => import('../pages/SourceVideosPage.vue'),
+    },
     { path: '/assets', component: () => import('../pages/AssetsPage.vue') },
     {
       path: '/accounts',

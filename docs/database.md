@@ -17,3 +17,10 @@ Instagram credentials are stored in the platform-specific `instagram_accounts` t
 `asset_folders` и `assets` описывают виртуальное дерево. У каждого файла есть неизменяемый `storage_key` вида `assets/{assetID}/original`: rename и move изменяют только PostgreSQL, а не копируют объект в S3. `video_templates.config` хранит валидируемую базовую версию JSON-композиции, `video_templates.is_default` с partial unique index гарантирует не более одного default, а `template_asset_references` не даёт удалить ассет, который ещё используется шаблоном. Default-шаблон нельзя удалить, пока не назначен другой.
 
 При `POST /process` в `processing_jobs` записываются `template_id` и `template_snapshot`. Snapshot содержит изменённую для этого запуска конфигурацию и конкретные S3-ключи ассетов, поэтому queued/running job не зависит от последующего rename или редактирования шаблона. Process можно снова поставить для clip со статусом `completed`; исходные media files при этом переиспользуются. Render metadata привязана к `processing_job_id`; ключ результата включает ID job, поэтому несколько рендеров одного clip не перезаписывают друг друга. `GET /api/videos` возвращает каждую render-запись отдельно, включая имя шаблона из snapshot.
+# Source videos
+
+`source_video_settings` хранит единственную закреплённую `asset_folders` папку для
+страницы `/source-videos`. Сами оригиналы являются обычными `assets`. Поле
+`clips.source_asset_id` связывает независимую нарезку с оригиналом и использует
+`ON DELETE RESTRICT`, поэтому ассет нельзя удалить, пока Pipeline содержит
+созданные из него фрагменты.

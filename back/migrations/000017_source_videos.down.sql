@@ -1,0 +1,3 @@
+ALTER TABLE clips DROP COLUMN source_video_id;
+DROP TABLE source_videos;
+DELETE FROM streamers WHERE id = '00000000-0000-0000-0000-000000000001';

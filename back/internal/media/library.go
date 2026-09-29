@@ -22,7 +22,11 @@ func NewLibrary(db *pgxpool.Pool, storage Storage) *Library {
 
 func (l *Library) SourceURL(ctx context.Context, clipID string) (string, error) {
 	var key string
-	if err := l.db.QueryRow(ctx, `SELECT storage_key FROM media_files WHERE clip_id=$1 AND type='source' ORDER BY created_at DESC LIMIT 1`, clipID).Scan(&key); err != nil {
+	if err := l.db.QueryRow(ctx, `SELECT COALESCE(m.storage_key,v.storage_key,a.storage_key) FROM clips c
+		LEFT JOIN LATERAL (SELECT storage_key FROM media_files WHERE clip_id=c.id AND type='source' ORDER BY created_at DESC LIMIT 1) m ON true
+		LEFT JOIN source_videos v ON v.id=c.source_video_id
+		LEFT JOIN assets a ON a.id=c.source_asset_id
+		WHERE c.id=$1 AND COALESCE(m.storage_key,v.storage_key,a.storage_key) IS NOT NULL`, clipID).Scan(&key); err != nil {
 		if err == pgx.ErrNoRows {
 			return "", fmt.Errorf("downloaded source not found")
 		}

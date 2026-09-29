@@ -38,7 +38,7 @@ type Local struct {
 
 func (s *Service) List(ctx context.Context) ([]Local, error) {
 	rows, e := s.db.Query(ctx, `SELECT c.id,c.streamer_id,s.display_name,c.title,c.twitch_clip_id,COALESCE(c.thumbnail_url,''),COALESCE(c.duration,0),
-		EXISTS(SELECT 1 FROM media_files m WHERE m.clip_id=c.id AND m.type='source'),c.status,COALESCE(c.error,''),
+		(EXISTS(SELECT 1 FROM media_files m WHERE m.clip_id=c.id AND m.type='source') OR c.source_video_id IS NOT NULL OR c.source_asset_id IS NOT NULL),c.status,COALESCE(c.error,''),
 		COALESCE(j.current_step,''),COALESCE(j.progress,0),COALESCE(j.type::text,''),COALESCE(j.status::text,''),
 		c.is_ready_fragment,c.edit_timeline
 		FROM clips c JOIN streamers s ON s.id=c.streamer_id
@@ -111,7 +111,7 @@ func (s *Service) EnqueueProcess(ctx context.Context, id, templateID string, dra
 		INSERT INTO processing_jobs(clip_id,type,template_id,template_snapshot)
 		SELECT c.id,'process',$2,$3 FROM clips c
 		WHERE c.id=$1
-		AND EXISTS (SELECT 1 FROM media_files m WHERE m.clip_id=c.id AND m.type='source')
+		AND (EXISTS (SELECT 1 FROM media_files m WHERE m.clip_id=c.id AND m.type='source') OR c.source_video_id IS NOT NULL OR c.source_asset_id IS NOT NULL)
 		AND NOT EXISTS (SELECT 1 FROM processing_jobs j WHERE j.clip_id=c.id AND j.type='process' AND j.status IN ('pending','running'))
 		ON CONFLICT DO NOTHING RETURNING clip_id
 	)
@@ -120,7 +120,7 @@ func (s *Service) EnqueueProcess(ctx context.Context, id, templateID string, dra
 	if e == pgx.ErrNoRows {
 		var hasSource, hasActiveJob bool
 		if lookupErr := s.db.QueryRow(ctx, `SELECT
-			EXISTS(SELECT 1 FROM media_files WHERE clip_id=$1 AND type='source'),
+			(EXISTS(SELECT 1 FROM media_files WHERE clip_id=$1 AND type='source') OR EXISTS(SELECT 1 FROM clips WHERE id=$1 AND (source_video_id IS NOT NULL OR source_asset_id IS NOT NULL))),
 			EXISTS(SELECT 1 FROM processing_jobs WHERE clip_id=$1 AND type='process' AND status IN ('pending','running'))`, id).Scan(&hasSource, &hasActiveJob); lookupErr != nil {
 			return lookupErr
 		}
@@ -156,10 +156,11 @@ func (s *Service) attachClipSources(ctx context.Context, primaryID string, raw [
 		assetID := "clip-source:" + segment.ClipID
 		if !seen[assetID] {
 			var storageKey, mimeType string
-			err := s.db.QueryRow(ctx, `SELECT m.storage_key,m.mime_type
-				FROM clips c JOIN media_files m ON m.clip_id=c.id AND m.type='source'
-				WHERE c.id=$1 AND c.is_ready_fragment=true
-				ORDER BY m.created_at DESC LIMIT 1`, segment.ClipID).Scan(&storageKey, &mimeType)
+			err := s.db.QueryRow(ctx, `SELECT COALESCE(m.storage_key,v.storage_key,a.storage_key),COALESCE(m.mime_type,v.mime_type,a.mime_type)
+				FROM clips c LEFT JOIN LATERAL (SELECT storage_key,mime_type FROM media_files WHERE clip_id=c.id AND type='source' ORDER BY created_at DESC LIMIT 1) m ON true
+				LEFT JOIN source_videos v ON v.id=c.source_video_id
+				LEFT JOIN assets a ON a.id=c.source_asset_id
+				WHERE c.id=$1 AND c.is_ready_fragment=true AND COALESCE(m.storage_key,v.storage_key,a.storage_key) IS NOT NULL`, segment.ClipID).Scan(&storageKey, &mimeType)
 			if err == pgx.ErrNoRows {
 				return nil, fmt.Errorf("ready fragment %s has no downloaded source", segment.ClipID)
 			}
@@ -193,7 +194,7 @@ func (s *Service) UpdateFragment(ctx context.Context, id string, ready bool, tim
 	}
 	command, err := s.db.Exec(ctx, `UPDATE clips SET is_ready_fragment=$2,edit_timeline=$3,updated_at=now()
 		WHERE id=$1 AND status IN ('downloaded','completed')
-		AND EXISTS(SELECT 1 FROM media_files WHERE clip_id=$1 AND type='source')`, id, ready, data)
+		AND (EXISTS(SELECT 1 FROM media_files WHERE clip_id=$1 AND type='source') OR source_video_id IS NOT NULL OR source_asset_id IS NOT NULL)`, id, ready, data)
 	if err != nil {
 		return err
 	}

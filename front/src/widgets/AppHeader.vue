@@ -12,6 +12,7 @@ import {
 
 const primaryNavigation = [
   { url: '/search/subscriptions', label: 'Клипы' },
+  { url: '/source-videos', label: 'Видео / Сериалы' },
   { url: '/pipeline', label: 'Pipeline' },
 ]
 const menuNavigation = [

@@ -9,6 +9,7 @@ import (
 	"github.com/finde-clip/finde-v2/back/internal/instagram"
 	"github.com/finde-clip/finde-v2/back/internal/media"
 	"github.com/finde-clip/finde-v2/back/internal/processing"
+	"github.com/finde-clip/finde-v2/back/internal/sourcevideo"
 	"github.com/finde-clip/finde-v2/back/internal/streamer"
 	"github.com/finde-clip/finde-v2/back/internal/subscription"
 	"github.com/finde-clip/finde-v2/back/internal/videotemplate"
@@ -22,20 +23,21 @@ import (
 )
 
 type API struct {
-	streamers *streamer.Service
-	clips     *clip.Service
-	subs      *subscription.Service
-	assets    *assets.Service
-	templates *videotemplate.Service
-	library   *media.Library
-	videos    *media.Videos
-	jobs      *processing.Jobs
-	instagram *instagram.Service
-	log       *slog.Logger
+	streamers    *streamer.Service
+	clips        *clip.Service
+	subs         *subscription.Service
+	assets       *assets.Service
+	templates    *videotemplate.Service
+	library      *media.Library
+	videos       *media.Videos
+	jobs         *processing.Jobs
+	instagram    *instagram.Service
+	sourceVideos *sourcevideo.Service
+	log          *slog.Logger
 }
 
-func New(s *streamer.Service, c *clip.Service, subs *subscription.Service, assets *assets.Service, templates *videotemplate.Service, library *media.Library, v *media.Videos, j *processing.Jobs, instagram *instagram.Service, l *slog.Logger) *API {
-	return &API{streamers: s, clips: c, subs: subs, assets: assets, templates: templates, library: library, videos: v, jobs: j, instagram: instagram, log: l}
+func New(s *streamer.Service, c *clip.Service, subs *subscription.Service, assets *assets.Service, templates *videotemplate.Service, library *media.Library, v *media.Videos, j *processing.Jobs, instagram *instagram.Service, sourceVideos *sourcevideo.Service, l *slog.Logger) *API {
+	return &API{streamers: s, clips: c, subs: subs, assets: assets, templates: templates, library: library, videos: v, jobs: j, instagram: instagram, sourceVideos: sourceVideos, log: l}
 }
 func (a *API) Router() http.Handler {
 	r := chi.NewRouter()
@@ -59,6 +61,14 @@ func (a *API) Router() http.Handler {
 		r.Post("/", a.uploadAsset)
 		r.Patch("/{id}", a.updateAsset)
 		r.Delete("/{id}", a.deleteAsset)
+	})
+	r.Route("/api/source-videos", func(r chi.Router) {
+		r.Get("/", a.listSourceVideos)
+		r.Put("/folder", a.pinSourceVideoFolder)
+		r.Post("/", a.uploadSourceVideo)
+		r.Patch("/{id}", a.updateSourceVideo)
+		r.Post("/{id}/cuts", a.createSourceVideoCut)
+		r.Delete("/{id}", a.deleteSourceVideo)
 	})
 	r.Route("/api/asset-folders", func(r chi.Router) {
 		r.Post("/", a.createFolder)
@@ -101,6 +111,99 @@ func (a *API) Router() http.Handler {
 	r.Post("/api/videos/{id}/instagram/{containerID}/publish", a.publishInstagramContainer)
 	r.Delete("/api/videos/{id}", a.deleteVideo)
 	return r
+}
+
+func (a *API) listSourceVideos(w http.ResponseWriter, r *http.Request) {
+	items, err := a.sourceVideos.List(r.Context())
+	if err != nil {
+		fail(w, 500, err)
+		return
+	}
+	write(w, 200, map[string]any{"data": items})
+}
+
+type sourceVideoFolderInput struct {
+	FolderID *string `json:"folderId"`
+}
+
+func (a *API) pinSourceVideoFolder(w http.ResponseWriter, r *http.Request) {
+	var input sourceVideoFolderInput
+	if json.NewDecoder(r.Body).Decode(&input) != nil {
+		fail(w, 400, errText("invalid JSON"))
+		return
+	}
+	if err := a.sourceVideos.PinFolder(r.Context(), emptyToNil(input.FolderID)); err != nil {
+		fail(w, 422, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *API) uploadSourceVideo(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 20<<30)
+	if err := r.ParseMultipartForm(32 << 20); err != nil {
+		fail(w, 400, errText("invalid or too large multipart upload"))
+		return
+	}
+	if r.MultipartForm != nil {
+		defer r.MultipartForm.RemoveAll()
+	}
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		fail(w, 400, errText("file is required"))
+		return
+	}
+	defer file.Close()
+	items, err := a.sourceVideos.Upload(r.Context(), header.Filename, header.Header.Get("Content-Type"), header.Size, file)
+	if err != nil {
+		fail(w, 422, err)
+		return
+	}
+	write(w, 201, map[string]any{"data": items})
+}
+
+type sourceVideoUpdateInput struct {
+	Duration float64 `json:"duration"`
+}
+
+func (a *API) updateSourceVideo(w http.ResponseWriter, r *http.Request) {
+	var input sourceVideoUpdateInput
+	if json.NewDecoder(r.Body).Decode(&input) != nil {
+		fail(w, 400, errText("invalid JSON"))
+		return
+	}
+	if err := a.sourceVideos.SetDuration(r.Context(), chi.URLParam(r, "id"), input.Duration); err != nil {
+		fail(w, 422, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+type sourceVideoCutInput struct {
+	Title    string               `json:"title"`
+	Timeline composition.Timeline `json:"timeline"`
+}
+
+func (a *API) createSourceVideoCut(w http.ResponseWriter, r *http.Request) {
+	var input sourceVideoCutInput
+	if json.NewDecoder(r.Body).Decode(&input) != nil {
+		fail(w, 400, errText("invalid JSON"))
+		return
+	}
+	id, err := a.sourceVideos.CreateCut(r.Context(), chi.URLParam(r, "id"), input.Title, input.Timeline)
+	if err != nil {
+		fail(w, 422, err)
+		return
+	}
+	write(w, 201, map[string]any{"data": map[string]string{"id": id}})
+}
+
+func (a *API) deleteSourceVideo(w http.ResponseWriter, r *http.Request) {
+	if err := a.sourceVideos.Delete(r.Context(), chi.URLParam(r, "id")); err != nil {
+		fail(w, 422, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 func (a *API) listJobs(w http.ResponseWriter, r *http.Request) {
 	x, e := a.jobs.List(r.Context())

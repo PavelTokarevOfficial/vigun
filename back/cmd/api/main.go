@@ -14,6 +14,7 @@ import (
 	"github.com/finde-clip/finde-v2/back/internal/media"
 	"github.com/finde-clip/finde-v2/back/internal/platform/db"
 	"github.com/finde-clip/finde-v2/back/internal/processing"
+	"github.com/finde-clip/finde-v2/back/internal/sourcevideo"
 	"github.com/finde-clip/finde-v2/back/internal/streamer"
 	"github.com/finde-clip/finde-v2/back/internal/subscription"
 	"github.com/finde-clip/finde-v2/back/internal/videotemplate"
@@ -63,7 +64,7 @@ func main() {
 		instagramFactory,
 		cfg.InstagramAppSecret,
 	)
-	srv := &http.Server{Addr: cfg.HTTPAddr, Handler: httpapi.New(streamer.New(pool), clip.New(pool, twitchClient, templateService), subscriptionService, assetService, templateService, media.NewLibrary(pool, store), media.NewVideos(pool, store), processing.NewJobs(pool), instagramService, log).Router(), ReadHeaderTimeout: 5 * time.Second}
+	srv := &http.Server{Addr: cfg.HTTPAddr, Handler: httpapi.New(streamer.New(pool), clip.New(pool, twitchClient, templateService), subscriptionService, assetService, templateService, media.NewLibrary(pool, store), media.NewVideos(pool, store), processing.NewJobs(pool), instagramService, sourcevideo.New(pool, store), log).Router(), ReadHeaderTimeout: 5 * time.Second}
 	go func() {
 		log.Info("api started", "addr", cfg.HTTPAddr)
 		if e := srv.ListenAndServe(); e != nil && e != http.ErrServerClosed {

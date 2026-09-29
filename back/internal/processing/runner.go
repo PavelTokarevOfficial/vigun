@@ -19,6 +19,7 @@ type Runner struct {
 }
 type Input struct {
 	JobID, ClipID, ClipURL string
+	SourceKey              string
 	Width, Height, Blur    int
 	Preset                 string
 	TemplateSnapshot       []byte
@@ -38,7 +39,11 @@ func (r *Runner) Process(ctx context.Context, in Input) (Result, error) {
 	}
 	out := Result{SourceKey: "sources/" + in.ClipID + "/source.mp4", AudioKey: "audio/" + in.ClipID + "/audio.wav", SubtitleKey: "subtitles/" + in.ClipID + "/subtitles.srt", RenderKey: "renders/" + in.ClipID + "/" + renderName + ".mp4"}
 	src := filepath.Join(d, "source.mp4")
-	if e = r.ensureSource(ctx, in.ClipURL, out.SourceKey, src); e != nil {
+	sourceKey := out.SourceKey
+	if in.SourceKey != "" {
+		sourceKey = in.SourceKey
+	}
+	if e = r.ensureSource(ctx, in.ClipURL, sourceKey, src); e != nil {
 		return out, e
 	}
 	audio := filepath.Join(d, "audio.wav")

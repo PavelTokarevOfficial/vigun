@@ -4,6 +4,7 @@ import {
   Check,
   Download,
   ExternalLink,
+  Film,
   Play,
   Plus,
   RotateCcw,
@@ -69,6 +70,12 @@ function toggleTrainSelection() {
             class="aspect-video w-full object-cover"
             draggable="false"
           >
+          <div
+            v-else
+            class="grid aspect-video w-full place-content-center bg-gradient-to-br from-violet-700 to-slate-900 text-white"
+          >
+            <Film class="size-10 opacity-70" />
+          </div>
 
           <div
             class="absolute top-0 px-3 py-1 text-white [-webkit-text-stroke:2px_black] [paint-order:stroke_fill]"
@@ -133,9 +140,7 @@ function toggleTrainSelection() {
 
     <section class="xl:border-l xl:border-dashed xl:border-slate-300 xl:pl-4">
       <div class="flex items-center justify-between gap-2">
-        <h3 class="font-semibold">
-          Фрагменты · {{ readyFragments.length }}
-        </h3>
+        <h3 class="font-semibold">Фрагменты · {{ readyFragments.length }}</h3>
         <div class="flex items-center gap-2">
           <button
             v-if="trainSelectionMode && selectedTrainClipIDs.size >= 2"
@@ -181,6 +186,13 @@ function toggleTrainSelection() {
             ]"
             draggable="false"
           >
+          <div
+            v-else
+            class="grid aspect-video w-full place-content-center bg-gradient-to-br from-violet-700 to-slate-900 text-white"
+            :class="usedFragmentIDs.has(clip.id) ? 'brightness-50' : ''"
+          >
+            <Film class="size-10 opacity-70" />
+          </div>
           <div
             class="absolute top-0 px-3 py-1 text-white [-webkit-text-stroke:2px_black] [paint-order:stroke_fill]"
           >

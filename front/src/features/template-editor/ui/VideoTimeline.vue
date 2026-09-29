@@ -7,11 +7,12 @@ import {
   Maximize2,
   Scissors,
   Trash2,
+  Undo2,
   Video,
   ZoomIn,
   ZoomOut,
 } from '@lucide/vue'
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import TimelineEditor, {
   type TimelineAction,
   type TimelineEffect,
@@ -34,9 +35,16 @@ const props = withDefaults(
     selectedLayerId: string | null
     selectedSegmentId: string | null
     sourceOnly?: boolean
+    compact?: boolean
     playheadTime?: number
+    canUndo?: boolean
   }>(),
-  { sourceOnly: false, playheadTime: undefined },
+  {
+    sourceOnly: false,
+    compact: false,
+    playheadTime: undefined,
+    canUndo: false,
+  },
 )
 const emit = defineEmits<{
   updateSegments: [segments: TimelineSegment[]]
@@ -45,6 +53,7 @@ const emit = defineEmits<{
   selectLayer: [id: string | null]
   selectSegment: [id: string]
   updateTime: [time: number]
+  undo: []
 }>()
 
 const currentTime = ref(0)
@@ -59,6 +68,9 @@ const readingAsset = ref(false)
 const assetDurationWarning = ref('')
 const draggedSegmentID = ref<string | null>(null)
 const manualScale = ref<number | null>(null)
+const timelineViewport = ref<HTMLElement | null>(null)
+const timelineViewportWidth = ref(960)
+let timelineResizeObserver: ResizeObserver | null = null
 let groupMoveSnapshot = new Map<string, { start: number; end: number }>()
 const suppressActionClick = ref(false)
 let syncingPlayhead = false
@@ -87,7 +99,13 @@ const timelineDuration = computed(() =>
     ...props.layers.map((layer) => layer.endTime ?? 0),
   ),
 )
-const fitScale = computed(() => Math.max(0.1, timelineDuration.value / 8))
+const fitScale = computed(() => {
+  const visibleScaleCount = Math.max(
+    1,
+    (timelineViewportWidth.value - 18) / 120,
+  )
+  return Math.max(0.05, timelineDuration.value / visibleScaleCount)
+})
 const timelineScale = computed(() => manualScale.value ?? fitScale.value)
 const options = computed<TimelineOptions>(() => ({
   scale: timelineScale.value,
@@ -95,7 +113,7 @@ const options = computed<TimelineOptions>(() => ({
   scaleSplitCount: 5,
   minScaleCount: 1,
   startLeft: 18,
-  rowHeight: 46,
+  rowHeight: props.compact ? 34 : 46,
   duration: timelineDuration.value,
   gridSnap: true,
   dragLine: true,
@@ -127,11 +145,26 @@ const canSplitSelected = computed(() => {
         currentTime.value < layout.end - 0.1,
     )
   }
+  if (props.sourceOnly) {
+    return Boolean(segmentAtOutputTime(props.segments, currentTime.value))
+  }
   if (!selectedLayer.value) return false
   const start = selectedLayer.value.startTime ?? 0
   const end = selectedLayer.value.endTime ?? outputDuration.value
   return currentTime.value > start + 0.1 && currentTime.value < end - 0.1
 })
+
+onMounted(() => {
+  const element = timelineViewport.value
+  if (!element) return
+  const updateWidth = () => {
+    timelineViewportWidth.value = Math.max(120, element.clientWidth)
+  }
+  updateWidth()
+  timelineResizeObserver = new ResizeObserver(updateWidth)
+  timelineResizeObserver.observe(element)
+})
+onBeforeUnmount(() => timelineResizeObserver?.disconnect())
 const canRemoveSelected = computed(
   () =>
     Boolean(selectedLayer.value) ||
@@ -546,7 +579,13 @@ function selectedResizeRanges(params: {
 
 function split() {
   if (!canSplitSelected.value) return
-  const segmentIndex = selectedSegmentIndex.value
+  let segmentIndex = selectedSegmentIndex.value
+  if (segmentIndex < 0 && props.sourceOnly) {
+    const active = segmentAtOutputTime(props.segments, currentTime.value)
+    segmentIndex = active
+      ? props.segments.findIndex((segment) => segment.id === active.segment.id)
+      : -1
+  }
   if (segmentIndex >= 0) {
     const segment = props.segments[segmentIndex]
     const layout = segmentLayout(segmentIndex)
@@ -900,7 +939,7 @@ function zoomOut() {
 }
 
 function fitTimeline() {
-  manualScale.value = null
+  manualScale.value = fitScale.value
 }
 
 function insertAtTime(
@@ -1106,7 +1145,10 @@ function readVideoDuration(url?: string) {
 </script>
 
 <template>
-  <section class="rounded-xl border border-slate-200 bg-white p-4">
+  <section
+    class="rounded-xl border border-slate-200 bg-white"
+    :class="compact ? 'p-1' : 'p-4'"
+  >
     <div class="flex flex-wrap items-center gap-2">
       <AppButton
         v-if="!sourceOnly"
@@ -1118,11 +1160,22 @@ function readVideoDuration(url?: string) {
       </AppButton>
       <AppButton
         variant="secondary"
-        class="grid place-content-center w-10 h-10 !p-0"
+        :class="compact ? 'grid size-8 place-content-center !p-0' : 'grid size-10 place-content-center !p-0'"
         :disabled="!canSplitSelected"
         @click="split"
       >
         <Scissors class="inline size-4" />
+      </AppButton>
+      <AppButton
+        v-if="compact"
+        variant="secondary"
+        class="grid size-8 place-content-center !p-0"
+        :disabled="!canUndo"
+        title="Отменить последнее действие"
+        aria-label="Отменить последнее действие"
+        @click="emit('undo')"
+      >
+        <Undo2 class="size-4" />
       </AppButton>
       <AppButton
         v-if="!sourceOnly"
@@ -1133,6 +1186,7 @@ function readVideoDuration(url?: string) {
         <Scissors class="mr-1 inline size-4" />Разделить монтаж и все слои
       </AppButton>
       <AppButton
+        v-if="!compact"
         variant="secondary"
         :disabled="selectedSegmentIndex <= 0"
         title="Переместить выбранный фрагмент левее"
@@ -1142,6 +1196,7 @@ function readVideoDuration(url?: string) {
         <ChevronLeft class="size-4" />
       </AppButton>
       <AppButton
+        v-if="!compact"
         variant="secondary"
         :disabled="selectedSegmentIndex < 0 || selectedSegmentIndex >= segments.length - 1"
         class="grid place-content-center w-10 h-10 !p-0"
@@ -1160,6 +1215,7 @@ function readVideoDuration(url?: string) {
         {{ selectedLayer.visible ? 'Скрыть слой' : 'Показать слой' }}
       </AppButton>
       <AppButton
+        v-if="!compact"
         variant="danger"
         class="grid place-content-center w-10 h-10 !p-0"
         :disabled="!canRemoveSelected"
@@ -1197,7 +1253,7 @@ function readVideoDuration(url?: string) {
         >
           <Maximize2 class="size-4" />
         </button>
-        <span class="px-1 text-xs text-slate-500">
+        <span v-if="!compact" class="px-1 text-xs text-slate-500">
           деление {{ formatTime(timelineScale) }}
         </span>
       </div>
@@ -1205,7 +1261,11 @@ function readVideoDuration(url?: string) {
     <p v-if="assetDurationWarning" class="mt-2 text-sm text-amber-700">
       {{ assetDurationWarning }}
     </p>
-    <div class="mt-4 overflow-hidden rounded-lg border border-slate-200">
+    <div
+      ref="timelineViewport"
+      class="overflow-hidden rounded-lg border border-slate-200"
+      :class="compact ? 'mt-1' : 'mt-4'"
+    >
       <TimelineEditor
         ref="timelineEditor"
         v-model="rows"
@@ -1223,8 +1283,11 @@ function readVideoDuration(url?: string) {
         <template #action="{ action }">
           <button
             type="button"
-            class="flex h-full w-full min-w-0 cursor-grab items-center justify-between gap-2 overflow-hidden px-3 text-xs font-medium text-white active:cursor-grabbing"
-            :class="action.selected ? 'border-2 border-dashed border-amber-200 shadow-[inset_0_0_0_1px_rgba(15,23,42,0.35)]' : 'border-0'"
+            class="flex h-full w-full min-w-0 cursor-grab items-center justify-between gap-2 overflow-hidden text-xs font-medium text-white active:cursor-grabbing"
+            :class="[
+              action.selected ? 'border-2 border-dashed border-amber-200 shadow-[inset_0_0_0_1px_rgba(15,23,42,0.35)]' : 'border-0',
+              compact ? 'px-2' : 'px-3',
+            ]"
             :style="{ backgroundColor: action.data?.color }"
             :draggable="action.data?.kind === 'segment'"
             @mousedown="stopTimelineMove($event, action)"
@@ -1240,7 +1303,10 @@ function readVideoDuration(url?: string) {
       </TimelineEditor>
     </div>
 
-    <div class="mt-3 flex flex-wrap gap-x-4 gap-y-2 text-xs text-slate-500">
+    <div
+      v-if="!compact"
+      class="mt-3 flex flex-wrap gap-x-4 gap-y-2 text-xs text-slate-500"
+    >
       <span v-if="hasMontage"
         ><i
           class="mr-1 inline-block size-2 rounded-full bg-violet-600"

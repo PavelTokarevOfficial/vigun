@@ -211,11 +211,11 @@ func (s *Service) DeleteAsset(ctx context.Context, id string) error {
 		return err
 	}
 	var referenced bool
-	if err := s.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM template_asset_references WHERE asset_id=$1)`, id).Scan(&referenced); err != nil {
+	if err := s.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM template_asset_references WHERE asset_id=$1) OR EXISTS(SELECT 1 FROM clips WHERE source_asset_id=$1)`, id).Scan(&referenced); err != nil {
 		return err
 	}
 	if referenced {
-		return fmt.Errorf("asset is used by a template; remove it from the template first")
+		return fmt.Errorf("asset is used by a template or Pipeline fragment; remove the reference first")
 	}
 	if err := s.storage.Delete(ctx, key); err != nil {
 		return fmt.Errorf("delete asset from object storage: %w", err)
