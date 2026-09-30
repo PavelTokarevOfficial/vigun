@@ -8,15 +8,8 @@ import ErrorState from '@/shared/ui/ErrorState.vue'
 import AddStreamersDialog from './AddStreamersDialog.vue'
 
 const manager = useStreamerManager()
-const {
-  busy,
-  editNickname,
-  editing,
-  error,
-  notice,
-  rows,
-  subscriptionBusyIDs,
-} = manager
+const { busy, editNickname, editing, error, rows, subscriptionBusyIDs } =
+  manager
 
 function updatePriority(event: Event, id: string) {
   const priority = Number((event.target as HTMLInputElement).value)
@@ -46,7 +39,6 @@ onMounted(() => void manager.load())
       >
     </div>
     <ErrorState v-if="error" :message="error" />
-    <p v-if="notice" class="mb-4 text-sm text-emerald-700">{{ notice }}</p>
     <EmptyState v-if="!rows.length" message="Стримеров пока нет." />
     <article
       v-for="row in rows"

@@ -1,4 +1,5 @@
 import { computed, ref } from 'vue'
+import { toast } from 'vue-sonner'
 import type { SubscriptionFeed, TwitchClip } from '@/entities/clip/model/types'
 import { readData, readError } from '@/shared/api/http'
 import type { DateRangeValue } from '@/shared/lib/dateRange'
@@ -8,7 +9,6 @@ export function useClipSubscriptions(controls: SubscriptionSyncControls) {
   const feeds = ref<SubscriptionFeed[]>([])
   const loading = ref(true)
   const error = ref('')
-  const notice = ref('')
   const busyClipId = ref('')
   const previewFeed = ref<SubscriptionFeed | null>(null)
   const previewInitialIndex = ref(0)
@@ -37,7 +37,6 @@ export function useClipSubscriptions(controls: SubscriptionSyncControls) {
     if (controls.syncing.value || feeds.value.length === 0) return
     controls.syncing.value = true
     error.value = ''
-    notice.value = ''
     const failed: string[] = []
     let total = 0
 
@@ -66,7 +65,7 @@ export function useClipSubscriptions(controls: SubscriptionSyncControls) {
         }
       }
       await load()
-      notice.value = `Синхронизация завершена. Получено клипов: ${total}.`
+      toast.success(`Синхронизация завершена. Получено клипов: ${total}.`)
       if (failed.length) {
         error.value = `Не удалось синхронизировать: ${failed.join(', ')}`
       }
@@ -149,14 +148,13 @@ export function useClipSubscriptions(controls: SubscriptionSyncControls) {
       return
     controls.clearing.value = true
     error.value = ''
-    notice.value = ''
     try {
       const result = await readData<{ deleted: number }>(
         await fetch('/api/subscriptions/clips', { method: 'DELETE' }),
       )
       closePreview()
       await load()
-      notice.value = `Синхронизированные клипы удалены: ${result.deleted}.`
+      toast.success(`Синхронизированные клипы удалены: ${result.deleted}.`)
     } catch (cause) {
       error.value =
         cause instanceof Error
@@ -183,7 +181,6 @@ export function useClipSubscriptions(controls: SubscriptionSyncControls) {
     feeds,
     loading,
     error,
-    notice,
     busyClipId,
     previewFeed,
     previewInitialIndex,

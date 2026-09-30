@@ -10,7 +10,6 @@ const {
   instagramAccountsLoading,
   instagramBusy,
   instagramForm,
-  instagramMessage,
   instagramVideo,
   publicVideoURL,
   publishToInstagram,
@@ -167,9 +166,6 @@ const {
           </p>
         </details>
 
-        <p v-if="instagramMessage" class="text-sm text-emerald-700">
-          {{ instagramMessage }}
-        </p>
         <footer class="flex justify-end gap-2 border-t border-slate-200 pt-4">
           <AppButton
             variant="secondary"

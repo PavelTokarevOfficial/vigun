@@ -64,9 +64,6 @@ function updateDateRange(range: { start: string; end: string }) {
         </span>
       </div>
     </div>
-    <p v-if="search.notice.value" class="mt-3 text-sm text-emerald-700">
-      {{ search.notice.value }}
-    </p>
     <ErrorState v-if="search.error.value" :message="search.error.value" />
     <div class="mt-6 grid gap-4 md:grid-cols-3">
       <article

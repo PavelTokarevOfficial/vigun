@@ -1,4 +1,5 @@
 import { computed, onMounted, ref, watch } from 'vue'
+import { toast } from 'vue-sonner'
 import type { TwitchClip } from '@/entities/clip/model/types'
 import type { Streamer } from '@/entities/streamer/model/types'
 import { readData, readError } from '@/shared/api/http'
@@ -17,7 +18,6 @@ export function useClipSearch() {
   const resolving = ref(false)
   const subscribing = ref(false)
   const resolvedStreamerId = ref('')
-  const notice = ref('')
   const previewOpen = ref(false)
   const previewInitialIndex = ref(0)
   let requestVersion = 0
@@ -90,7 +90,6 @@ export function useClipSearch() {
 
     resolving.value = true
     error.value = ''
-    notice.value = ''
     resolvedStreamerId.value = ''
     try {
       let created = false
@@ -142,7 +141,7 @@ export function useClipSearch() {
         }),
       )
       Object.assign(streamer, updated)
-      notice.value = `Вы подписались на ${streamer.displayName}.`
+      toast.success(`Вы подписались на ${streamer.displayName}.`)
     } catch (cause) {
       error.value =
         cause instanceof Error ? cause.message : 'Не удалось оформить подписку'
@@ -211,7 +210,6 @@ export function useClipSearch() {
     loading,
     resolving,
     subscribing,
-    notice,
     previewOpen,
     previewInitialIndex,
     streamerName,

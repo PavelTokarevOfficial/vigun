@@ -1,4 +1,5 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { toast } from 'vue-sonner'
 import type {
   Asset,
   AssetFolder,
@@ -70,7 +71,6 @@ export function usePipelineWorkspace() {
   const instagramBusy = ref(false)
   const instagramAccountsLoading = ref(false)
   const instagramAccounts = ref<InstagramAccount[]>([])
-  const instagramMessage = ref('')
   const trainSelectionMode = ref(false)
   const selectedTrainClipIDs = ref(new Set<string>())
   const fragmentClip = ref<PipelineClip | null>(null)
@@ -597,7 +597,6 @@ export function usePipelineWorkspace() {
 
   async function openInstagramDialog(video: RenderedVideo) {
     instagramVideo.value = video
-    instagramMessage.value = ''
     instagramForm.value = {
       accountId: '',
       tunnelUrl: `https://${window.location.hostname}`,
@@ -628,7 +627,6 @@ export function usePipelineWorkspace() {
   function closeInstagramDialog() {
     if (instagramBusy.value) return
     instagramVideo.value = null
-    instagramMessage.value = ''
   }
 
   function publicVideoURL(video: RenderedVideo) {
@@ -643,11 +641,13 @@ export function usePipelineWorkspace() {
     const video = instagramVideo.value
     if (!video) return
     if (!instagramForm.value.accountId) {
-      error.value = 'Выберите Instagram-аккаунт.'
+      toast.error('Выберите Instagram-аккаунт.')
       return
     }
     instagramBusy.value = true
-    instagramMessage.value = 'Instagram скачивает и обрабатывает видео…'
+    const notification = toast.loading(
+      'Instagram скачивает и обрабатывает видео…',
+    )
     error.value = ''
     try {
       const thumbOffset = instagramForm.value.thumbOffset.trim()
@@ -699,11 +699,11 @@ export function usePipelineWorkspace() {
           },
         ),
       )
-      instagramMessage.value = 'Видео опубликовано в Instagram.'
+      toast.success('Видео опубликовано в Instagram.', { id: notification })
     } catch (cause) {
-      instagramMessage.value = ''
-      error.value =
+      const message =
         cause instanceof Error ? cause.message : 'Не удалось опубликовать видео'
+      toast.error(message, { id: notification })
     } finally {
       instagramBusy.value = false
     }
@@ -785,7 +785,6 @@ export function usePipelineWorkspace() {
     instagramAccounts,
     instagramAccountsLoading,
     instagramForm,
-    instagramMessage,
     instagramVideo,
     isProcessQueued,
     openClipPreview,

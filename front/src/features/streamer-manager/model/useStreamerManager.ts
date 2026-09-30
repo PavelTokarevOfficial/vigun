@@ -1,11 +1,11 @@
 import { ref } from 'vue'
+import { toast } from 'vue-sonner'
 import type { Streamer } from '@/entities/streamer/model/types'
 import { readData, readError } from '@/shared/api/http'
 
 export function useStreamerManager() {
   const rows = ref<Streamer[]>([])
   const error = ref('')
-  const notice = ref('')
   const busy = ref(false)
   const subscriptionBusyIDs = ref(new Set<string>())
   const addDialogOpen = ref(false)
@@ -57,7 +57,6 @@ export function useStreamerManager() {
   async function add() {
     const twitchLogins = nicknames.value.split(/\r?\n/)
     if (!twitchLogins.some((item) => item.trim())) return false
-    notice.value = ''
     let created = 0
     const added = await run(async () => {
       const response = await request(
@@ -71,9 +70,11 @@ export function useStreamerManager() {
       created = (await readData<{ created: number }>(response)).created
     })
     if (added) {
-      notice.value = created
-        ? `Добавлено стримеров: ${created}.`
-        : 'Все указанные стримеры уже были добавлены.'
+      toast.success(
+        created
+          ? `Добавлено стримеров: ${created}.`
+          : 'Все указанные стримеры уже были добавлены.',
+      )
       closeAddDialog()
     }
     return added
@@ -161,7 +162,6 @@ export function useStreamerManager() {
   return {
     rows,
     error,
-    notice,
     busy,
     subscriptionBusyIDs,
     addDialogOpen,

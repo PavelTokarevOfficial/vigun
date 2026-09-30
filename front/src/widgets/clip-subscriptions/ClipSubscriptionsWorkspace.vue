@@ -18,7 +18,6 @@ const {
   error,
   feeds,
   loading,
-  notice,
   previewFeed,
   previewInitialIndex,
   previewOpen,
@@ -55,7 +54,6 @@ onBeforeUnmount(() => {
 <template>
   <div>
     <ErrorState v-if="error" :message="error" />
-    <p v-if="notice" class="mb-4 text-sm text-emerald-700">{{ notice }}</p>
     <p v-if="loading" class="py-8 text-center text-slate-500">
       Загружаем подписки…
     </p>

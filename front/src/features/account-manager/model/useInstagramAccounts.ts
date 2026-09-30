@@ -1,4 +1,5 @@
 import { onMounted, ref } from 'vue'
+import { toast } from 'vue-sonner'
 import type {
   InstagramAccount,
   InstagramAccountForm,
@@ -16,7 +17,6 @@ export function useInstagramAccounts() {
   const loading = ref(false)
   const busy = ref(false)
   const error = ref('')
-  const notice = ref('')
   const tokenBusy = ref('')
   const editorOpen = ref(false)
   const editing = ref<InstagramAccount | null>(null)
@@ -45,7 +45,6 @@ export function useInstagramAccounts() {
     if (tokenBusy.value) return
     tokenBusy.value = `${account.id}:${action}`
     error.value = ''
-    notice.value = ''
     try {
       const response = await fetch(
         `/api/instagram-accounts/${account.id}/${action}`,
@@ -60,12 +59,13 @@ export function useInstagramAccounts() {
       accounts.value = accounts.value.map((item) =>
         item.id === updated.id ? updated : item,
       )
-      notice.value =
+      const message =
         action === 'check-token'
           ? `Токен @${updated.verifiedUsername || updated.nickname} работает.`
           : action === 'exchange-token'
             ? `Для @${updated.nickname} сохранён долгоживущий токен.`
             : `Токен @${updated.nickname} обновлён.`
+      toast.success(message)
     } catch (cause) {
       error.value =
         cause instanceof Error
@@ -162,7 +162,6 @@ export function useInstagramAccounts() {
     loading,
     busy,
     error,
-    notice,
     tokenBusy,
     editorOpen,
     editing,
