@@ -14,6 +14,7 @@ const primaryNavigation = [
   { url: '/search/subscriptions', label: 'Клипы' },
   { url: '/source-videos', label: 'Видео / Сериалы' },
   { url: '/pipeline', label: 'Pipeline' },
+  { url: '/account-monitoring', label: 'Мониторинг аккаунтов' },
 ]
 const menuNavigation = [
   { url: '/accounts', label: 'Менеджер аккаунтов' },

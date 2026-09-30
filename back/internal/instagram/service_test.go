@@ -54,6 +54,12 @@ func (c *clientStub) ContainerStatus(_ context.Context, id string) (Container, e
 func (c *clientStub) Publish(_ context.Context, _ string) (string, error) {
 	return "media-1", nil
 }
+func (c *clientStub) ListMedia(context.Context, string) (MediaPage, error) {
+	return MediaPage{Items: []Media{
+		{ID: "reel-1", MediaProductType: "REELS"},
+		{ID: "feed-1", MediaProductType: "FEED"},
+	}, NextCursor: "next"}, nil
+}
 
 func TestCreateRequiresPublicHTTPSVideo(t *testing.T) {
 	service := testService(&clientStub{})
@@ -76,5 +82,15 @@ func TestCreateNormalizesCollaborators(t *testing.T) {
 	}
 	if container.ID != "container-1" || client.input.Collaborators[0] != "first" {
 		t.Fatalf("unexpected result: %#v %#v", container, client.input.Collaborators)
+	}
+}
+
+func TestReelsFiltersOtherMediaProducts(t *testing.T) {
+	page, err := testService(&clientStub{}).Reels(context.Background(), "account-1", "")
+	if err != nil {
+		t.Fatalf("list reels: %v", err)
+	}
+	if len(page.Items) != 1 || page.Items[0].ID != "reel-1" || page.NextCursor != "next" {
+		t.Fatalf("unexpected page: %#v", page)
 	}
 }

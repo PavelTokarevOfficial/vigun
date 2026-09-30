@@ -156,6 +156,55 @@ func (c *Client) Publish(ctx context.Context, containerID string) (string, error
 	return response.ID, err
 }
 
+func (c *Client) ListMedia(ctx context.Context, after string) (app.MediaPage, error) {
+	query := url.Values{
+		"fields":       {"id,caption,media_type,media_product_type,media_url,thumbnail_url,permalink,timestamp"},
+		"limit":        {"50"},
+		"access_token": {c.accessToken},
+	}
+	if after != "" {
+		query.Set("after", after)
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/"+url.PathEscape(c.userID)+"/media?"+query.Encode(), nil)
+	if err != nil {
+		return app.MediaPage{}, err
+	}
+	var response struct {
+		Data []struct {
+			ID               string `json:"id"`
+			Caption          string `json:"caption"`
+			MediaType        string `json:"media_type"`
+			MediaProductType string `json:"media_product_type"`
+			MediaURL         string `json:"media_url"`
+			ThumbnailURL     string `json:"thumbnail_url"`
+			Permalink        string `json:"permalink"`
+			Timestamp        string `json:"timestamp"`
+		} `json:"data"`
+		Paging struct {
+			Cursors struct {
+				After string `json:"after"`
+			} `json:"cursors"`
+			Next string `json:"next"`
+		} `json:"paging"`
+	}
+	if err = c.do(request, &response); err != nil {
+		return app.MediaPage{}, err
+	}
+	items := make([]app.Media, 0, len(response.Data))
+	for _, item := range response.Data {
+		items = append(items, app.Media{
+			ID: item.ID, Caption: item.Caption, MediaType: item.MediaType,
+			MediaProductType: item.MediaProductType, MediaURL: item.MediaURL,
+			ThumbnailURL: item.ThumbnailURL, Permalink: item.Permalink, Timestamp: item.Timestamp,
+		})
+	}
+	nextCursor := ""
+	if response.Paging.Next != "" {
+		nextCursor = response.Paging.Cursors.After
+	}
+	return app.MediaPage{Items: items, NextCursor: nextCursor}, nil
+}
+
 func (c *Client) post(ctx context.Context, path string, form url.Values, target any) error {
 	form.Set("access_token", c.accessToken)
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, strings.NewReader(form.Encode()))

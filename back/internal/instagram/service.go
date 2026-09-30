@@ -32,6 +32,22 @@ type PublishedMedia struct {
 	ID string `json:"id"`
 }
 
+type Media struct {
+	ID               string `json:"id"`
+	Caption          string `json:"caption"`
+	MediaType        string `json:"mediaType"`
+	MediaProductType string `json:"mediaProductType"`
+	MediaURL         string `json:"mediaUrl"`
+	ThumbnailURL     string `json:"thumbnailUrl"`
+	Permalink        string `json:"permalink"`
+	Timestamp        string `json:"timestamp"`
+}
+
+type MediaPage struct {
+	Items      []Media `json:"items"`
+	NextCursor string  `json:"nextCursor,omitempty"`
+}
+
 type Account struct {
 	ID                 string     `json:"id"`
 	Nickname           string     `json:"nickname"`
@@ -86,6 +102,7 @@ type Client interface {
 	CreateReel(context.Context, CreateInput) (string, error)
 	ContainerStatus(context.Context, string) (Container, error)
 	Publish(context.Context, string) (string, error)
+	ListMedia(context.Context, string) (MediaPage, error)
 }
 
 type ClientFactory func(userID, accessToken string) Client
@@ -241,6 +258,25 @@ func (s *Service) Publish(ctx context.Context, accountID, id string) (PublishedM
 	}
 	publishedID, err := client.Publish(ctx, id)
 	return PublishedMedia{ID: publishedID}, err
+}
+
+func (s *Service) Reels(ctx context.Context, accountID, after string) (MediaPage, error) {
+	client, err := s.client(ctx, accountID)
+	if err != nil {
+		return MediaPage{}, err
+	}
+	page, err := client.ListMedia(ctx, strings.TrimSpace(after))
+	if err != nil {
+		return MediaPage{}, err
+	}
+	reels := make([]Media, 0, len(page.Items))
+	for _, item := range page.Items {
+		if strings.EqualFold(item.MediaProductType, "REELS") {
+			reels = append(reels, item)
+		}
+	}
+	page.Items = reels
+	return page, nil
 }
 
 func normalizeAccountInput(input AccountInput) AccountInput {

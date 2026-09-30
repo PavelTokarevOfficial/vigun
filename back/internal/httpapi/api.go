@@ -97,6 +97,7 @@ func (a *API) Router() http.Handler {
 		r.Post("/{id}/exchange-token", a.exchangeInstagramToken)
 		r.Post("/{id}/refresh-token", a.refreshInstagramToken)
 		r.Post("/{id}/check-token", a.checkInstagramToken)
+		r.Get("/{id}/reels", a.listInstagramReels)
 	})
 	r.Post("/api/clips/import", a.importClip)
 	r.Get("/api/clips", a.localClips)
@@ -397,6 +398,14 @@ func (a *API) checkInstagramToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	write(w, 200, map[string]any{"data": item})
+}
+func (a *API) listInstagramReels(w http.ResponseWriter, r *http.Request) {
+	page, err := a.instagram.Reels(r.Context(), chi.URLParam(r, "id"), r.URL.Query().Get("after"))
+	if err != nil {
+		fail(w, 422, err)
+		return
+	}
+	write(w, 200, map[string]any{"data": page})
 }
 func (a *API) deleteVideo(w http.ResponseWriter, r *http.Request) {
 	if e := a.videos.Delete(r.Context(), chi.URLParam(r, "id")); e != nil {
