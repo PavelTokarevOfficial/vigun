@@ -103,10 +103,11 @@ func (r *Runner) Process(ctx context.Context, in Input) (Result, error) {
 	if renderName == "" {
 		renderName = "vertical"
 	}
-	out := Result{SourceKey: "sources/" + in.ClipID + "/source.mp4", AudioKey: "audio/" + in.ClipID + "/audio.wav", SubtitleKey: "subtitles/" + in.ClipID + "/subtitles.srt", RenderKey: "renders/" + in.ClipID + "/" + renderName + ".mp4"}
+	transcriptKey := "subtitles/" + in.ClipID + "/subtitles.srt"
 	if in.WhisperModel != "" && in.WhisperModel != "tiny" {
-		out.SubtitleKey = "subtitles/" + in.ClipID + "/" + in.WhisperModel + ".srt"
+		transcriptKey = "subtitles/" + in.ClipID + "/" + in.WhisperModel + ".srt"
 	}
+	out := Result{SourceKey: "sources/" + in.ClipID + "/source.mp4", AudioKey: "audio/" + in.ClipID + "/audio.wav", SubtitleKey: "subtitles/" + in.ClipID + "/renders/" + renderName + ".srt", RenderKey: "renders/" + in.ClipID + "/" + renderName + ".mp4"}
 	requiresSubtitles, e := requiresSubtitleLayer(in.TemplateSnapshot, in.Width, in.Height, in.Blur)
 	if e != nil {
 		return out, e
@@ -141,7 +142,7 @@ func (r *Runner) Process(ctx context.Context, in Input) (Result, error) {
 				return out, e
 			}
 		}
-		if ok, e := r.Storage.Exists(ctx, out.SubtitleKey); e != nil {
+		if ok, e := r.Storage.Exists(ctx, transcriptKey); e != nil {
 			return out, e
 		} else if !ok {
 			if e = report(in, "transcribing", "transcribing", 30); e != nil {
@@ -154,7 +155,7 @@ func (r *Runner) Process(ctx context.Context, in Input) (Result, error) {
 			if e = r.Transcriber.Transcribe(ctx, audio, base, in.WhisperModel); e != nil {
 				return out, fmt.Errorf("transcribe: %w", e)
 			}
-			if e = r.putFile(ctx, out.SubtitleKey, base+".srt", "application/x-subrip"); e != nil {
+			if e = r.putFile(ctx, transcriptKey, base+".srt", "application/x-subrip"); e != nil {
 				return out, e
 			}
 		}
@@ -176,7 +177,7 @@ func (r *Runner) Process(ctx context.Context, in Input) (Result, error) {
 		sub := filepath.Join(d, "subtitles.srt")
 		hasSubtitles := false
 		if requiresSubtitles {
-			if e = r.ensureLocal(ctx, out.SubtitleKey, sub); e != nil {
+			if e = r.ensureLocal(ctx, transcriptKey, sub); e != nil {
 				return out, e
 			}
 			hasSubtitles, e = srtHasCues(sub)
@@ -200,6 +201,11 @@ func (r *Runner) Process(ctx context.Context, in Input) (Result, error) {
 			subtitlePaths, e = layerSubtitleFiles(sub, d, config)
 			if e != nil {
 				return out, fmt.Errorf("prepare subtitle tracks: %w", e)
+			}
+		}
+		if requiresSubtitles {
+			if e = r.putFile(ctx, out.SubtitleKey, sub, "application/x-subrip"); e != nil {
+				return out, fmt.Errorf("save rendered subtitles: %w", e)
 			}
 		}
 		renderingStep := "rendering_without_subtitles"

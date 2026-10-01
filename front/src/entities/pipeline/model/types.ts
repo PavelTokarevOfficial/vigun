@@ -57,6 +57,7 @@ export type PipelineVideoPreview = {
   templateName?: string
   url: string
   mode: 'video' | 'twitch'
+  renderedVideoId?: string
 }
 
 export type InstagramContainer = {

@@ -86,6 +86,41 @@ func (v *Videos) Download(ctx context.Context, id string) (Object, string, error
 	return object, renderFilename(title), nil
 }
 
+// Subtitles opens the SRT artifact associated with a rendered video. New
+// renders store an immutable, retimed subtitle file for each processing job.
+// The clip-level fallback keeps older renders viewable.
+func (v *Videos) Subtitles(ctx context.Context, id string) (Object, error) {
+	var key string
+	err := v.db.QueryRow(ctx, `
+		SELECT COALESCE(
+			(SELECT subtitle.storage_key
+			 FROM media_files subtitle
+			 WHERE subtitle.processing_job_id=render.processing_job_id AND subtitle.type='subtitle'
+			 ORDER BY subtitle.created_at DESC LIMIT 1),
+			(SELECT subtitle.storage_key
+			 FROM media_files subtitle
+			 WHERE subtitle.clip_id=render.clip_id AND subtitle.type='subtitle'
+			 ORDER BY subtitle.created_at DESC LIMIT 1),
+			''
+		)
+		FROM media_files render
+		WHERE render.id=$1 AND render.type='render'`, id).Scan(&key)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return Object{}, fmt.Errorf("rendered video not found")
+		}
+		return Object{}, err
+	}
+	if key == "" {
+		return Object{}, fmt.Errorf("rendered video has no subtitles")
+	}
+	object, err := v.storage.Get(ctx, key)
+	if err != nil {
+		return Object{}, fmt.Errorf("open rendered subtitles from object storage: %w", err)
+	}
+	return object, nil
+}
+
 func (v *Videos) Exists(ctx context.Context, id string) (bool, error) {
 	var exists bool
 	err := v.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM media_files WHERE id=$1 AND type='render')`, id).Scan(&exists)

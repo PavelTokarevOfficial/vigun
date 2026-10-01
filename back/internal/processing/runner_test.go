@@ -93,6 +93,9 @@ func TestProcessSkipsExistingArtifactsOnRetry(t *testing.T) {
 	if _, ok := store.objects[first.RenderKey]; !ok {
 		t.Fatalf("render %q was not stored", first.RenderKey)
 	}
+	if _, ok := store.objects[first.SubtitleKey]; !ok {
+		t.Fatalf("rendered subtitles %q were not stored", first.SubtitleKey)
+	}
 	if downloader.calls != 1 || processor.audioCalls != 1 || transcriber.calls != 1 || processor.renderCalls != 1 {
 		t.Fatalf("unexpected first-run calls: download=%d audio=%d transcribe=%d render=%d", downloader.calls, processor.audioCalls, transcriber.calls, processor.renderCalls)
 	}

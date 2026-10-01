@@ -619,8 +619,9 @@ export function usePipelineWorkspace() {
       title: video.title,
       streamer: video.streamer,
       templateName: video.templateName,
-      url: video.url,
+      url: `/api/videos/${video.id}/content`,
       mode: 'video',
+      renderedVideoId: video.id,
     }
   }
 

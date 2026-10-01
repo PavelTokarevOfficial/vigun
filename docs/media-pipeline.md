@@ -2,7 +2,7 @@
 
 Импорт Twitch-клипа сразу создаёт download-job. После скачивания пользователь может сохранить один или несколько интервалов исходника как готовый фрагмент без физической перезаписи source-файла. «Паровозик» собирает timeline из нескольких готовых фрагментов: первый clip остаётся основным входом render-job, остальные downloaded sources добавляются в immutable snapshot как служебные video assets. Если у выбранного шаблона включён train mode, настроенные video assets циклически вставляются между фрагментами как перебивки.
 
-Артефакты лежат в object storage: `sources/{clipID}/source.mp4`, `audio/{clipID}/audio.wav`, `subtitles/{clipID}/subtitles.srt` и `renders/{clipID}/{jobID}.mp4`.
+Артефакты лежат в object storage: `sources/{clipID}/source.mp4`, `audio/{clipID}/audio.wav`, переиспользуемая Whisper-транскрипция `subtitles/{clipID}/{model}.srt`, субтитры конкретного рендера `subtitles/{clipID}/renders/{jobID}.srt` и видео `renders/{clipID}/{jobID}.mp4`.
 
 Worker берёт job транзакционно, скачивает исходный ролик через Chromium/Rod, извлекает mono WAV 16 kHz через FFmpeg, передаёт WAV в `whisper-cli` и получает SRT. Далее FFmpeg собирает vertical layout: размытый фон, исходный ролик по центру и burned-in SRT. Для этого образ намеренно проверяет FFmpeg-фильтр `subtitles` (он требует сборку с libass); FFmpeg без него не подходит для worker. Временные файлы существуют только в каталоге job и удаляются после него.
 
@@ -19,6 +19,8 @@ Worker берёт job транзакционно, скачивает исход�
 Для image/GIF-слоя в режиме `contain` FFmpeg переводит вход в RGBA и дополняет его до размеров блока прозрачными пикселями. Альфа-канал исходного PNG/GIF сохраняется, поэтому свободное место при сохранении пропорций и прозрачные закруглённые края показывают нижние слои, а не чёрный фон.
 
 `startTime`/`endTime` ограничивают присутствие слоя на итоговой шкале. Для visual layers FFmpeg использует временный `enable`, для asset video/image/GIF дополнительно сдвигает PTS, а для subtitle layers создаётся отдельный SRT, обрезанный к диапазону слоя. При вставке asset-сегмента исходные Twitch-субтитры получают соответствующий временной разрыв и не показываются поверх вставленного ролика.
+
+Перед запуском FFmpeg worker сохраняет отдельный SRT с уже применённым timeline для каждого process job. Он связан с итоговым MP4 через `processing_job_id`; endpoint `/api/videos/{id}/subtitles` отдаёт именно этот файл для синхронного просмотра в колонке «Готовые». Для старых рендеров, созданных до появления job-specific SRT, endpoint использует последнюю доступную транскрипцию клипа.
 
 Это поведение зафиксировано unit test-ом `internal/processing/runner_test.go`: retry не должен повторно скачивать исходник, извлекать audio, вызывать Whisper или перерендеривать готовый вариант.
 # Длинные видео и сериалы

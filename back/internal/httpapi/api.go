@@ -125,6 +125,7 @@ func (a *API) Router() http.Handler {
 	r.Get("/api/videos", a.readyVideos)
 	r.Get("/api/videos/{id}/download", a.downloadVideo)
 	r.Get("/api/videos/{id}/content", a.streamVideo)
+	r.Get("/api/videos/{id}/subtitles", a.streamVideoSubtitles)
 	r.Post("/api/videos/{id}/instagram", a.createInstagramContainer)
 	r.Get("/api/videos/{id}/instagram/{containerID}", a.instagramContainerStatus)
 	r.Post("/api/videos/{id}/instagram/{containerID}/publish", a.publishInstagramContainer)
@@ -260,6 +261,22 @@ func (a *API) downloadVideo(w http.ResponseWriter, r *http.Request) {
 }
 func (a *API) streamVideo(w http.ResponseWriter, r *http.Request) {
 	a.sendVideo(w, r, false)
+}
+func (a *API) streamVideoSubtitles(w http.ResponseWriter, r *http.Request) {
+	object, e := a.videos.Subtitles(r.Context(), chi.URLParam(r, "id"))
+	if e != nil {
+		fail(w, 404, e)
+		return
+	}
+	defer object.Body.Close()
+	w.Header().Set("Content-Type", "application/x-subrip; charset=utf-8")
+	w.Header().Set("Content-Disposition", "inline")
+	if object.Size >= 0 {
+		w.Header().Set("Content-Length", strconv.FormatInt(object.Size, 10))
+	}
+	if _, e = io.Copy(w, object.Body); e != nil {
+		a.log.Error("stream rendered subtitles", "video_id", chi.URLParam(r, "id"), "error", e)
+	}
 }
 func (a *API) sendVideo(w http.ResponseWriter, r *http.Request, attachment bool) {
 	object, filename, e := a.videos.Download(r.Context(), chi.URLParam(r, "id"))
