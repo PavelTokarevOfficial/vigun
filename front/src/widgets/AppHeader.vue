@@ -17,6 +17,7 @@ const primaryNavigation = [
   { url: '/account-monitoring', label: 'Мониторинг аккаунтов' },
 ]
 const menuNavigation = [
+  { url: '/settings', label: 'Настройки' },
   { url: '/accounts', label: 'Менеджер аккаунтов' },
   { url: '/streamers', label: 'Стримеры' },
   { url: '/templates', label: 'Шаблоны видео' },

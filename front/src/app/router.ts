@@ -39,6 +39,10 @@ export default createRouter({
       component: () => import('../pages/AccountMonitoringPage.vue'),
     },
     {
+      path: '/settings',
+      component: () => import('../pages/SettingsPage.vue'),
+    },
+    {
       path: '/templates',
       component: () => import('../pages/TemplatesPage.vue'),
     },
