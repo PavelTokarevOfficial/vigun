@@ -29,6 +29,8 @@ const props = defineProps<{
   train?: TemplateConfig['train']
   assets?: Asset[]
   folders?: AssetFolder[]
+  whisperModels?: { id: string; name: string; type: string }[]
+  defaultWhisperModelId?: string
 }>()
 const emit = defineEmits<{
   select: [id: string]
@@ -102,6 +104,12 @@ function displayedLayerLabel(layer: Layer) {
 
 function displayedLayerName(layer: Layer) {
   return layer.name.replace(/ · часть \d+$/, '')
+}
+
+function subtitleModel(layer: Layer) {
+  const id = layer.whisperModelId || props.defaultWhisperModelId
+  const model = props.whisperModels?.find((item) => item.id === id)
+  return model ? `${model.name} · ${model.type}` : ''
 }
 
 function addLayer(event: Event) {
@@ -214,9 +222,17 @@ function addLayer(event: Event) {
               class="size-4 shrink-0 text-violet-600"
             />
             <SquareDashed v-else class="size-4 shrink-0 text-violet-600" />
-            <span class="min-w-0 truncate font-medium">{{
-              displayedLayerName(track.layer)
-            }}</span>
+            <span class="min-w-0">
+              <span class="block truncate font-medium">{{
+                displayedLayerName(track.layer)
+              }}</span>
+              <span
+                v-if="track.layer.type === 'subtitles' && subtitleModel(track.layer)"
+                class="mt-0.5 block text-xs font-medium text-violet-700"
+              >
+                Whisper · {{ subtitleModel(track.layer) }}
+              </span>
+            </span>
           </span>
           <span class="shrink-0 text-xs text-slate-500">{{
             displayedLayerLabel(track.layer)

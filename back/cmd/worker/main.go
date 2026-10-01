@@ -14,6 +14,7 @@ import (
 	"github.com/finde-clip/finde-v2/back/internal/media"
 	"github.com/finde-clip/finde-v2/back/internal/platform/db"
 	"github.com/finde-clip/finde-v2/back/internal/processing"
+	"github.com/finde-clip/finde-v2/back/internal/whispermodel"
 	"github.com/jackc/pgx/v5"
 	"log/slog"
 	"os"
@@ -57,7 +58,8 @@ func main() {
 	jobs := processing.NewJobs(pool)
 	files := media.NewFiles(pool)
 	down := browser.NewRodDownloader(cfg.BrowserHeadless, cfg.BrowserBin)
-	runner := &processing.Runner{Storage: store, Downloader: down, Media: ffmpeg.New(cfg.FFMPEG), Transcriber: whisper.New(cfg.Whisper, cfg.WhisperModel)}
+	whisperSettings := &whispermodel.Repository{DB: pool, Dir: cfg.WhisperModelsDir}
+	runner := &processing.Runner{Storage: store, Downloader: down, Media: ffmpeg.New(cfg.FFMPEG), Transcriber: whisper.New(cfg.Whisper, whisperSettings)}
 	tick := time.NewTicker(time.Second)
 	defer tick.Stop()
 	log.Info("worker started")
@@ -175,7 +177,7 @@ func run(ctx context.Context, log *slog.Logger, j *processing.Jobs, files *media
 		return e
 	}
 	log.Info("job step", "job_id", job.ID, "clip_id", job.ClipID, "step", "processing_queued", "progress", 2)
-	out, e := r.Process(ctx, processing.Input{JobID: job.ID, ClipID: job.ClipID, ClipURL: job.ClipURL, SourceKey: job.SourceKey, Width: cfg.OutputWidth, Height: cfg.OutputHeight, Blur: cfg.BackgroundBlur, Preset: cfg.FFmpegPreset, TemplateSnapshot: job.TemplateSnapshot, Progress: func(step, status string, percent int) error {
+	out, e := r.Process(ctx, processing.Input{JobID: job.ID, ClipID: job.ClipID, ClipURL: job.ClipURL, SourceKey: job.SourceKey, Width: cfg.OutputWidth, Height: cfg.OutputHeight, Blur: cfg.BackgroundBlur, Preset: cfg.FFmpegPreset, TemplateSnapshot: job.TemplateSnapshot, WhisperModel: job.WhisperModel, Progress: func(step, status string, percent int) error {
 		log.Info("job step", "job_id", job.ID, "clip_id", job.ClipID, "step", step, "progress", percent)
 		return j.Step(ctx, job.ID, job.ClipID, step, status, percent)
 	}})

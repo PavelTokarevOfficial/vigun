@@ -22,6 +22,8 @@ type Video struct {
 	StorageKey      string    `json:"storageKey"`
 	URL             string    `json:"url"`
 	CreatedAt       time.Time `json:"createdAt"`
+	RenderDuration  float64   `json:"renderDurationSeconds"`
+	WhisperModel    string    `json:"whisperModel"`
 }
 type Videos struct {
 	db      *pgxpool.Pool
@@ -32,7 +34,13 @@ func NewVideos(db *pgxpool.Pool, s Storage) *Videos { return &Videos{db, s} }
 func (v *Videos) List(ctx context.Context) ([]Video, error) {
 	rows, e := v.db.Query(ctx, `
 		SELECT m.id,c.id,COALESCE(m.processing_job_id::text,''),c.title,s.display_name,c.twitch_url,COALESCE(c.thumbnail_url,''),
-			COALESCE(j.template_snapshot->>'templateName',''),m.storage_key,m.created_at
+			COALESCE(j.template_snapshot->>'templateName',''),m.storage_key,m.created_at,
+			COALESCE(EXTRACT(EPOCH FROM (j.finished_at-j.started_at)),0),
+			CASE
+				WHEN COALESCE(j.template_snapshot #>> '{whisperModel,name}','') = '' THEN ''
+				WHEN COALESCE(j.template_snapshot #>> '{whisperModel,type}','') = '' THEN j.template_snapshot #>> '{whisperModel,name}'
+				ELSE (j.template_snapshot #>> '{whisperModel,name}') || ' · ' || (j.template_snapshot #>> '{whisperModel,type}')
+			END
 		FROM media_files m
 		JOIN clips c ON c.id=m.clip_id
 		JOIN streamers s ON s.id=c.streamer_id
@@ -46,7 +54,7 @@ func (v *Videos) List(ctx context.Context) ([]Video, error) {
 	out := []Video{}
 	for rows.Next() {
 		var x Video
-		if e = rows.Scan(&x.ID, &x.ClipID, &x.ProcessingJobID, &x.Title, &x.Streamer, &x.TwitchURL, &x.ThumbnailURL, &x.TemplateName, &x.StorageKey, &x.CreatedAt); e != nil {
+		if e = rows.Scan(&x.ID, &x.ClipID, &x.ProcessingJobID, &x.Title, &x.Streamer, &x.TwitchURL, &x.ThumbnailURL, &x.TemplateName, &x.StorageKey, &x.CreatedAt, &x.RenderDuration, &x.WhisperModel); e != nil {
 			return nil, e
 		}
 		x.URL, e = v.storage.PresignGet(ctx, x.StorageKey, 15*time.Minute)

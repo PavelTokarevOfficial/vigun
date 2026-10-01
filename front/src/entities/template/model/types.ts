@@ -29,6 +29,7 @@ export type Layer = {
   assetId?: string
   text?: string
   textSource?: 'custom' | 'streamer_name'
+  whisperModelId?: string
   color?: string
   filters?: { blur?: number; brightness?: number }
   style?: {

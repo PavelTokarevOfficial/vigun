@@ -59,6 +59,8 @@ export function usePipelineWorkspace() {
   const templatesLoading = ref(false)
   const processStage = ref<'choose' | 'edit'>('choose')
   const selectedTemplate = ref<VideoTemplate | null>(null)
+  const whisperModels = ref<{ id: string; name: string; type: string }[]>([])
+  const defaultWhisperModelId = ref('')
   const assets = ref<Asset[]>([])
   const folders = ref<AssetFolder[]>([])
   const sourceURL = ref('')
@@ -108,9 +110,31 @@ export function usePipelineWorkspace() {
     processClipIDs.value = clipIDs
     processStage.value = 'choose'
     selectedTemplate.value = null
+    whisperModels.value = []
+    defaultWhisperModelId.value = ''
     sourceURL.value = ''
     timelineTime.value = 0
     try {
+      const whisperSettingsRequest = fetch('/api/settings/whisper')
+        .then((response) =>
+          readData<{
+            models: {
+              id: string
+              name: string
+              type: string
+              installed: boolean
+            }[]
+            settings: { activeModel: string }
+          }>(response),
+        )
+        .then((data) => {
+          whisperModels.value = data.models.filter((item) => item.installed)
+          defaultWhisperModelId.value = data.settings.activeModel
+        })
+        .catch(() => {
+          whisperModels.value = []
+          defaultWhisperModelId.value = ''
+        })
       const [templateResponse, assetResponse, ...sourceResponses] =
         await Promise.all([
           fetch('/api/templates'),
@@ -138,6 +162,7 @@ export function usePipelineWorkspace() {
         clipIDs.map((clipID, index) => [clipID, sourceItems[index]?.url ?? '']),
       )
       sourceURL.value = sourceURLs.value[id] ?? ''
+      await whisperSettingsRequest
       if (!templates.value.length) {
         error.value = 'Сначала создайте хотя бы один шаблон видео.'
         processClipID.value = null
@@ -154,6 +179,13 @@ export function usePipelineWorkspace() {
   async function chooseTemplate(template: VideoTemplate) {
     selectedTemplate.value = template
     renderEditor.replace(normalizeConfig(template.config))
+    renderEditor.updateConfig({
+      layers: renderEditor.draft.value.layers.map((layer) =>
+        layer.type === 'subtitles' && !layer.whisperModelId
+          ? { ...layer, whisperModelId: defaultWhisperModelId.value }
+          : layer,
+      ),
+    })
     const selectedClips = processClipIDs.value
       .map((id) => clips.value.find((clip) => clip.id === id))
       .filter((clip): clip is PipelineClip => Boolean(clip))
@@ -517,7 +549,6 @@ export function usePipelineWorkspace() {
   }
 
   function toggleTrainClip(id: string) {
-    if (usedFragmentIDs.value.has(id)) return
     const next = new Set(selectedTrainClipIDs.value)
     if (next.has(id)) next.delete(id)
     else next.add(id)
@@ -525,9 +556,7 @@ export function usePipelineWorkspace() {
   }
 
   function startTrain() {
-    const ids = [...selectedTrainClipIDs.value].filter(
-      (id) => !usedFragmentIDs.value.has(id),
-    )
+    const ids = [...selectedTrainClipIDs.value]
     if (ids.length < 2) {
       error.value = 'Выберите минимум два готовых фрагмента.'
       return
@@ -807,6 +836,8 @@ export function usePipelineWorkspace() {
     renderEditor,
     saveFragmentEdit,
     selectedTemplate,
+    whisperModels,
+    defaultWhisperModelId,
     selectedTimelineSegmentID,
     selectedTrainClipIDs,
     sendToRender,

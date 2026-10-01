@@ -63,6 +63,7 @@ type Layer struct {
 	AssetID           string  `json:"assetId,omitempty"`
 	Text              string  `json:"text,omitempty"`
 	TextSource        string  `json:"textSource,omitempty"`
+	WhisperModelID    string  `json:"whisperModelId,omitempty"`
 	Color             string  `json:"color,omitempty"`
 	Filters           Filters `json:"filters,omitempty"`
 	Style             Style   `json:"style,omitempty"`
@@ -95,8 +96,15 @@ type Snapshot struct {
 	Version      int             `json:"version"`
 	TemplateID   string          `json:"templateId"`
 	TemplateName string          `json:"templateName"`
+	WhisperModel *WhisperModel   `json:"whisperModel,omitempty"`
 	Config       Config          `json:"config"`
 	Assets       []AssetSnapshot `json:"assets"`
+}
+
+type WhisperModel struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Type string `json:"type"`
 }
 
 func ParseConfig(raw []byte) (Config, error) {

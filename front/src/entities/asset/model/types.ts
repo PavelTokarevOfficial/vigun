@@ -1,4 +1,4 @@
-export type AssetKind = 'image' | 'gif' | 'video' | 'audio'
+export type AssetKind = 'image' | 'gif' | 'video' | 'audio' | 'file'
 
 export type AssetFolder = {
   id: string
@@ -19,6 +19,8 @@ export type Asset = {
   url?: string
   createdAt: string
   updatedAt: string
+  managed: boolean
+  origin: string
 }
 
 export type AssetLibrary = { folders: AssetFolder[]; assets: Asset[] }

@@ -19,6 +19,7 @@ import (
 	"github.com/finde-clip/finde-v2/back/internal/streamer"
 	"github.com/finde-clip/finde-v2/back/internal/subscription"
 	"github.com/finde-clip/finde-v2/back/internal/videotemplate"
+	"github.com/finde-clip/finde-v2/back/internal/whispermodel"
 	"log/slog"
 	"net/http"
 	"os"
@@ -67,8 +68,9 @@ func main() {
 		cfg.InstagramAppSecret,
 	)
 	events := realtime.New()
+	whisperModels := whispermodel.New(&whispermodel.Repository{DB: pool, Dir: cfg.WhisperModelsDir}, events.Publish)
 	go postgres.ListenPipelineEvents(ctx, pool, log, events.Publish)
-	srv := &http.Server{Addr: cfg.HTTPAddr, Handler: httpapi.New(streamer.New(pool), clip.New(pool, twitchClient, templateService), subscriptionService, assetService, templateService, media.NewLibrary(pool, store), media.NewVideos(pool, store), processing.NewJobs(pool), instagramService, sourcevideo.New(pool, store), events, log).Router(), ReadHeaderTimeout: 5 * time.Second}
+	srv := &http.Server{Addr: cfg.HTTPAddr, Handler: httpapi.New(streamer.New(pool), clip.New(pool, twitchClient, templateService), subscriptionService, assetService, templateService, media.NewLibrary(pool, store), media.NewVideos(pool, store), processing.NewJobs(pool), instagramService, sourcevideo.New(pool, store), whisperModels, events, log).Router(), ReadHeaderTimeout: 5 * time.Second}
 	go func() {
 		log.Info("api started", "addr", cfg.HTTPAddr)
 		if e := srv.ListenAndServe(); e != nil && e != http.ErrServerClosed {

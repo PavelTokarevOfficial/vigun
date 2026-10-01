@@ -14,6 +14,8 @@ const {
   renameFolderName,
   deleteFolderTarget,
   previewAsset,
+  previewTextLoading,
+  previewTextError,
   renameAssetTarget,
   renameAssetName,
   deleteAssetTarget,
@@ -157,10 +159,33 @@ async function removeFolder() {
           class="w-full max-w-xl"
         />
         <img
-          v-else
+          v-else-if="previewAsset.kind === 'image' || previewAsset.kind === 'gif'"
           :src="previewAsset.url"
           :alt="previewAsset.name"
           class="max-h-[70vh] max-w-full object-contain"
+        >
+        <div
+          v-else-if="previewAsset.origin === 'subtitle' || previewAsset.mimeType === 'application/x-subrip'"
+          class="max-h-[70vh] w-full overflow-auto rounded-lg bg-white p-4 text-left"
+        >
+          <p v-if="previewTextLoading" class="text-sm text-slate-500">
+            Загружаем субтитры…
+          </p>
+          <p v-else-if="previewTextError" class="text-sm text-red-600">
+            {{ previewTextError }}
+          </p>
+          <pre
+            v-else
+            class="whitespace-pre-wrap break-words font-mono text-sm leading-6 text-slate-900"
+          >{{ manager.previewText.value }}</pre>
+        </div>
+        <a
+          v-else
+          :href="previewAsset.url"
+          target="_blank"
+          rel="noreferrer"
+          class="rounded-lg bg-white px-4 py-2 font-medium text-violet-700"
+          >Открыть файл</a
         >
       </div>
     </section>

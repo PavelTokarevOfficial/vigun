@@ -26,3 +26,7 @@ Instagram credentials are stored in the platform-specific `instagram_accounts` t
 `clips.source_asset_id` связывает независимую нарезку с оригиналом и использует
 `ON DELETE RESTRICT`, поэтому ассет нельзя удалить, пока Pipeline содержит
 созданные из него фрагменты.
+
+`whisper_settings` хранит единственный активный идентификатор модели, preset и
+необязательные overrides параметров `whisper-cli`. Worker читает эту строку перед
+каждой новой транскрибацией, поэтому изменение применяется без перезапуска.

@@ -49,12 +49,28 @@ function toggleTrainSelection() {
   trainSelectionMode.value = !trainSelectionMode.value
   selectedTrainClipIDs.value = new Set()
 }
+
+function formatRenderDuration(seconds: number) {
+  const total = Math.max(1, Math.round(seconds))
+  const hours = Math.floor(total / 3600)
+  const minutes = Math.floor((total % 3600) / 60)
+  const rest = total % 60
+  return [
+    hours ? `${hours} ч` : '',
+    minutes ? `${minutes} мин` : '',
+    rest || (!hours && !minutes) ? `${rest} сек` : '',
+  ]
+    .filter(Boolean)
+    .join(' ')
+}
 </script>
 
 <template>
   <div class="mt-6 grid gap-4 xl:grid-cols-4 xl:gap-8">
     <section class="min-w-0">
-      <h3 class="min-h-10 font-semibold">Скачанные · {{ downloaded.length }}</h3>
+      <h3 class="min-h-10 font-semibold">
+        Скачанные · {{ downloaded.length }}
+      </h3>
       <div class="mt-3 space-y-3">
         <p v-if="!downloaded.length" class="text-sm text-slate-500">
           Пока пусто.
@@ -163,7 +179,9 @@ function toggleTrainSelection() {
       class="relative min-w-0 xl:before:absolute xl:before:inset-y-0 xl:before:-left-4 xl:before:border-l xl:before:border-dashed xl:before:border-slate-300 xl:before:content-['']"
     >
       <div class="flex items-center justify-between gap-2">
-        <h3 class="min-h-10 font-semibold">Фрагменты · {{ readyFragments.length }}</h3>
+        <h3 class="min-h-10 font-semibold">
+          Фрагменты · {{ readyFragments.length }}
+        </h3>
         <div class="flex items-center gap-2">
           <button
             v-if="trainSelectionMode && selectedTrainClipIDs.size >= 2"
@@ -187,7 +205,10 @@ function toggleTrainSelection() {
         </div>
       </div>
       <div class="mt-3 space-y-3">
-        <p v-if="!readyFragments.length && !fragmentJobs.length" class="text-sm text-slate-500">
+        <p
+          v-if="!readyFragments.length && !fragmentJobs.length"
+          class="text-sm text-slate-500"
+        >
           Пока пусто.
         </p>
         <article
@@ -195,8 +216,16 @@ function toggleTrainSelection() {
           :key="`fragment-job-${job.id}`"
           class="relative overflow-hidden rounded-xl border border-violet-200 bg-violet-50"
         >
-          <div class="grid aspect-video w-full place-content-center bg-gradient-to-br from-violet-100 to-slate-200 px-4 text-center">
-            <span class="block max-w-full truncate text-sm font-semibold text-violet-800" :title="job.clipTitle || 'Новый фрагмент'">{{ job.clipTitle || 'Новый фрагмент' }}</span>
+          <div
+            class="grid aspect-video w-full place-content-center bg-gradient-to-br from-violet-100 to-slate-200 px-4 text-center"
+          >
+            <span
+              class="block max-w-full truncate text-sm font-semibold text-violet-800"
+              :title="job.clipTitle || 'Новый фрагмент'"
+              >{{
+                job.clipTitle || 'Новый фрагмент'
+              }}</span
+            >
           </div>
           <div class="absolute inset-x-0 top-0 p-3 text-slate-900">
             <b>Создание фрагмента</b>
@@ -228,7 +257,7 @@ function toggleTrainSelection() {
           :key="clip.id"
           class="relative overflow-hidden rounded-xl ring-offset-2"
           :class="[selectedTrainClipIDs.has(clip.id) ? 'ring-2 ring-violet-500' : '']"
-          :tabindex="trainSelectionMode && !usedFragmentIDs.has(clip.id) ? 0 : undefined"
+          :tabindex="trainSelectionMode ? 0 : undefined"
           @click="trainSelectionMode && toggleTrainClip(clip.id)"
           @keydown.enter="trainSelectionMode && toggleTrainClip(clip.id)"
         >
@@ -263,7 +292,7 @@ function toggleTrainSelection() {
             <Check :size="17" :stroke-width="3" />
           </span>
           <span
-            v-if="trainSelectionMode && !usedFragmentIDs.has(clip.id)"
+            v-if="trainSelectionMode"
             class="absolute left-3 bottom-3 grid size-7 place-content-center rounded-full bg-white text-violet-700"
           >
             <Check v-if="selectedTrainClipIDs.has(clip.id)" :size="17" />
@@ -276,14 +305,7 @@ function toggleTrainSelection() {
               <Play :size="16" />
             </AppButton>
             <AppButton
-              class="grid h-8 w-8 place-content-center"
-              title="Изменить монтаж"
-              @click.stop="openFragmentEditor(clip)"
-            >
-              <Scissors :size="16" />
-            </AppButton>
-            <AppButton
-              v-if="!usedFragmentIDs.has(clip.id)"
+              v-if="!isProcessQueued(clip)"
               class="grid h-8 w-8 place-content-center"
               title="Отправить на рендер"
               @click.stop="openTemplateChooser(clip.id)"
@@ -322,7 +344,10 @@ function toggleTrainSelection() {
           <div
             class="grid aspect-video w-full place-content-center bg-gradient-to-br from-violet-100 to-slate-200"
           >
-            <span class="block max-w-full truncate px-3 text-sm font-semibold text-violet-800" :title="job.isTrain ? `Паровозик · ${job.fragmentCount} фрагм.` : (job.clipTitle || 'Видео')">
+            <span
+              class="block max-w-full truncate px-3 text-sm font-semibold text-violet-800"
+              :title="job.isTrain ? `Паровозик · ${job.fragmentCount} фрагм.` : (job.clipTitle || 'Видео')"
+            >
               <template v-if="job.isTrain">
                 Паровозик · {{ job.fragmentCount }} фрагм.
               </template>
@@ -332,7 +357,13 @@ function toggleTrainSelection() {
             </span>
           </div>
           <div class="absolute inset-x-0 top-0 p-3 text-slate-900">
-            <b class="block truncate" :title="job.templateName || 'Рендер видео'">{{ job.templateName || 'Рендер видео' }}</b>
+            <b
+              class="block truncate"
+              :title="job.templateName || 'Рендер видео'"
+              >{{
+                job.templateName || 'Рендер видео'
+              }}</b
+            >
             <p class="text-xs">{{ renderJobStatus(job) }}</p>
           </div>
           <div class="absolute inset-x-3 bottom-3 flex items-end gap-2">
@@ -392,6 +423,12 @@ function toggleTrainSelection() {
                 · {{ video.templateName }}</template
               >
               · {{ new Date(video.createdAt).toLocaleString() }}
+              <template v-if="video.renderDurationSeconds > 0">
+                · рендер {{ formatRenderDuration(video.renderDurationSeconds) }}
+              </template>
+              <template v-if="video.whisperModel">
+                · Whisper {{ video.whisperModel }}
+              </template>
             </p>
           </div>
 

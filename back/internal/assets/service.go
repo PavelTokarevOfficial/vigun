@@ -35,6 +35,8 @@ type Asset struct {
 	URL        string    `json:"url,omitempty"`
 	CreatedAt  time.Time `json:"createdAt"`
 	UpdatedAt  time.Time `json:"updatedAt"`
+	Managed    bool      `json:"managed"`
+	Origin     string    `json:"origin"`
 }
 
 type Service struct {
@@ -77,9 +79,73 @@ func (s *Service) List(ctx context.Context) ([]Folder, []Asset, error) {
 		if err != nil {
 			return nil, nil, err
 		}
+		item.Managed = true
+		item.Origin = "asset"
 		items = append(items, item)
 	}
 	return folders, items, rows.Err()
+}
+
+func (s *Service) ListAll(ctx context.Context) ([]Folder, []Asset, error) {
+	folders, items, err := s.List(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	rows, err := s.db.Query(ctx, `
+		SELECT 'media:' || m.id::text,NULL,
+			COALESCE(NULLIF(c.title,''),m.storage_key) || ' · ' || m.type::text,
+			m.mime_type,m.size,m.storage_key,m.created_at,m.created_at,m.type::text
+		FROM media_files m
+		LEFT JOIN clips c ON c.id=m.clip_id
+		UNION ALL
+		SELECT 'source-video:' || v.id::text,NULL,v.name,v.mime_type,v.size,v.storage_key,v.created_at,v.updated_at,'source_video'
+		FROM source_videos v
+		ORDER BY 7 DESC`)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var item Asset
+		if err = rows.Scan(&item.ID, &item.FolderID, &item.Name, &item.MIMEType, &item.Size, &item.StorageKey, &item.CreatedAt, &item.UpdatedAt, &item.Origin); err != nil {
+			return nil, nil, err
+		}
+		item.Kind = displayKind(item.MIMEType)
+		item.URL, err = s.storage.PresignGet(ctx, item.StorageKey, 15*time.Minute)
+		if err != nil {
+			return nil, nil, err
+		}
+		items = append(items, item)
+	}
+	return folders, items, rows.Err()
+}
+
+func (s *Service) Open(ctx context.Context, id string) (media.Object, error) {
+	var key string
+	var err error
+	switch {
+	case strings.HasPrefix(id, "media:"):
+		err = s.db.QueryRow(ctx, `SELECT storage_key FROM media_files WHERE id=$1`, strings.TrimPrefix(id, "media:")).Scan(&key)
+	case strings.HasPrefix(id, "source-video:"):
+		err = s.db.QueryRow(ctx, `SELECT storage_key FROM source_videos WHERE id=$1`, strings.TrimPrefix(id, "source-video:")).Scan(&key)
+	default:
+		err = s.db.QueryRow(ctx, `SELECT storage_key FROM assets WHERE id=$1`, id).Scan(&key)
+	}
+	if err == pgx.ErrNoRows {
+		return media.Object{}, fmt.Errorf("file not found")
+	}
+	if err != nil {
+		return media.Object{}, err
+	}
+	return s.storage.Get(ctx, key)
+}
+
+func displayKind(mime string) string {
+	kind, err := kindForMIME(mime)
+	if err != nil {
+		return "file"
+	}
+	return kind
 }
 
 func (s *Service) CreateFolder(ctx context.Context, name string, parentID *string) (Folder, error) {

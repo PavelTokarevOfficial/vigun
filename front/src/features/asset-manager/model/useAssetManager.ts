@@ -20,13 +20,18 @@ export function useAssetManager() {
   const renameFolderName = ref('')
   const deleteFolderTarget = ref<AssetFolder | null>(null)
   const previewAsset = ref<Asset | null>(null)
+  const previewText = ref('')
+  const previewTextLoading = ref(false)
+  const previewTextError = ref('')
   const renameAssetTarget = ref<Asset | null>(null)
   const renameAssetName = ref('')
   const deleteAssetTarget = ref<Asset | null>(null)
 
   async function load() {
     try {
-      const library = await readData<AssetLibrary>(await fetch('/api/assets'))
+      const library = await readData<AssetLibrary>(
+        await fetch('/api/assets?includeSystem=1'),
+      )
       folders.value = library.folders
       assets.value = library.assets
     } catch (cause) {
@@ -153,6 +158,7 @@ export function useAssetManager() {
   }
 
   async function moveAsset(asset: Asset, folderID: string | null) {
+    if (!asset.managed) return false
     if (asset.folderId === folderID) return true
     return run(() =>
       request(
@@ -179,13 +185,36 @@ export function useAssetManager() {
     )
   }
 
-  function openAssetPreview(asset: Asset) {
+  async function openAssetPreview(asset: Asset) {
     previewAsset.value = asset
+    previewText.value = ''
+    previewTextError.value = ''
+    if (
+      asset.origin !== 'subtitle' &&
+      asset.mimeType !== 'application/x-subrip'
+    )
+      return
+    previewTextLoading.value = true
+    try {
+      const response = await fetch(`/api/assets/${asset.id}/content`)
+      if (!response.ok) throw new Error('Не удалось открыть файл субтитров')
+      previewText.value = await response.text()
+    } catch (cause) {
+      previewTextError.value =
+        cause instanceof Error
+          ? cause.message
+          : 'Не удалось открыть файл субтитров'
+    } finally {
+      previewTextLoading.value = false
+    }
   }
   function closeAssetPreview() {
     previewAsset.value = null
+    previewText.value = ''
+    previewTextError.value = ''
   }
   function openRenameAsset(asset: Asset) {
+    if (!asset.managed) return
     renameAssetTarget.value = asset
     renameAssetName.value = asset.name
   }
@@ -213,6 +242,7 @@ export function useAssetManager() {
     return renamed
   }
   function openDeleteAsset(asset: Asset) {
+    if (!asset.managed) return
     deleteAssetTarget.value = asset
   }
   function closeDeleteAsset() {
@@ -247,6 +277,9 @@ export function useAssetManager() {
     renameFolderName,
     deleteFolderTarget,
     previewAsset,
+    previewText,
+    previewTextLoading,
+    previewTextError,
     renameAssetTarget,
     renameAssetName,
     deleteAssetTarget,

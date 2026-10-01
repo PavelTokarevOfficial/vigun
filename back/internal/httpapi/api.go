@@ -14,39 +14,50 @@ import (
 	"github.com/finde-clip/finde-v2/back/internal/streamer"
 	"github.com/finde-clip/finde-v2/back/internal/subscription"
 	"github.com/finde-clip/finde-v2/back/internal/videotemplate"
+	"github.com/finde-clip/finde-v2/back/internal/whispermodel"
 	"github.com/go-chi/chi/v5"
 	"io"
 	"log/slog"
 	"mime"
 	"net/http"
+	"net/url"
 	"strconv"
+	"strings"
 	"time"
 )
 
 const websocketWriteTimeout = 5 * time.Second
 
 type API struct {
-	streamers    *streamer.Service
-	clips        *clip.Service
-	subs         *subscription.Service
-	assets       *assets.Service
-	templates    *videotemplate.Service
-	library      *media.Library
-	videos       *media.Videos
-	jobs         *processing.Jobs
-	instagram    *instagram.Service
-	sourceVideos *sourcevideo.Service
-	events       *realtime.Hub
-	log          *slog.Logger
+	streamers     *streamer.Service
+	clips         *clip.Service
+	subs          *subscription.Service
+	assets        *assets.Service
+	templates     *videotemplate.Service
+	library       *media.Library
+	videos        *media.Videos
+	jobs          *processing.Jobs
+	instagram     *instagram.Service
+	sourceVideos  *sourcevideo.Service
+	whisperModels *whispermodel.Service
+	events        *realtime.Hub
+	log           *slog.Logger
 }
 
-func New(s *streamer.Service, c *clip.Service, subs *subscription.Service, assets *assets.Service, templates *videotemplate.Service, library *media.Library, v *media.Videos, j *processing.Jobs, instagram *instagram.Service, sourceVideos *sourcevideo.Service, events *realtime.Hub, l *slog.Logger) *API {
-	return &API{streamers: s, clips: c, subs: subs, assets: assets, templates: templates, library: library, videos: v, jobs: j, instagram: instagram, sourceVideos: sourceVideos, events: events, log: l}
+func New(s *streamer.Service, c *clip.Service, subs *subscription.Service, assets *assets.Service, templates *videotemplate.Service, library *media.Library, v *media.Videos, j *processing.Jobs, instagram *instagram.Service, sourceVideos *sourcevideo.Service, whisperModels *whispermodel.Service, events *realtime.Hub, l *slog.Logger) *API {
+	return &API{streamers: s, clips: c, subs: subs, assets: assets, templates: templates, library: library, videos: v, jobs: j, instagram: instagram, sourceVideos: sourceVideos, whisperModels: whisperModels, events: events, log: l}
 }
 func (a *API) Router() http.Handler {
 	r := chi.NewRouter()
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) { write(w, 200, map[string]bool{"ok": true}) })
 	r.Get("/api/events", a.pipelineEvents)
+	r.Route("/api/settings/whisper", func(r chi.Router) {
+		r.Get("/", a.listWhisperModels)
+		r.Put("/", a.updateWhisperSettings)
+		r.Post("/models/{id}/download", a.downloadWhisperModel)
+		r.Put("/models/{id}/active", a.selectWhisperModel)
+		r.Delete("/models/{id}", a.deleteWhisperModel)
+	})
 	r.Route("/api/streamers", func(r chi.Router) {
 		r.Get("/", a.list)
 		r.Post("/", a.create)
@@ -63,6 +74,7 @@ func (a *API) Router() http.Handler {
 	r.Patch("/api/subscriptions/clips/{id}/viewed", a.markSubscriptionClipViewed)
 	r.Route("/api/assets", func(r chi.Router) {
 		r.Get("/", a.listAssets)
+		r.Get("/{id}/content", a.assetContent)
 		r.Post("/", a.uploadAsset)
 		r.Patch("/{id}", a.updateAsset)
 		r.Delete("/{id}", a.deleteAsset)
@@ -539,7 +551,39 @@ func (a *API) process(w http.ResponseWriter, r *http.Request) {
 		}
 		config = &parsed
 	}
-	if e := a.clips.EnqueueProcess(r.Context(), chi.URLParam(r, "id"), in.TemplateID, config); e != nil {
+	settings, e := a.whisperModels.Repo.Get(r.Context())
+	if e != nil {
+		fail(w, 500, e)
+		return
+	}
+	modelID := settings.ActiveModel
+	if config != nil {
+		layerModelID := ""
+		for _, layer := range config.Layers {
+			if layer.Type != "subtitles" || !layer.Visible || layer.WhisperModelID == "" {
+				continue
+			}
+			if layerModelID != "" && layerModelID != layer.WhisperModelID {
+				fail(w, 422, errText("all visible subtitle layers must use the same Whisper model"))
+				return
+			}
+			layerModelID = layer.WhisperModelID
+		}
+		if layerModelID != "" {
+			modelID = layerModelID
+		}
+	}
+	model, e := whispermodel.Find(modelID)
+	if e != nil {
+		fail(w, 422, e)
+		return
+	}
+	if !a.whisperModels.Installed(model.ID) {
+		fail(w, 422, errText("selected Whisper model is not installed"))
+		return
+	}
+	whisperSnapshot := composition.WhisperModel{ID: model.ID, Name: model.Name, Type: model.Type}
+	if e = a.clips.EnqueueProcess(r.Context(), chi.URLParam(r, "id"), in.TemplateID, config, whisperSnapshot); e != nil {
 		fail(w, 422, e)
 		return
 	}
@@ -725,12 +769,41 @@ type assetInput struct {
 }
 
 func (a *API) listAssets(w http.ResponseWriter, r *http.Request) {
-	folders, items, e := a.assets.List(r.Context())
+	var folders []assets.Folder
+	var items []assets.Asset
+	var e error
+	if r.URL.Query().Get("includeSystem") == "1" {
+		folders, items, e = a.assets.ListAll(r.Context())
+	} else {
+		folders, items, e = a.assets.List(r.Context())
+	}
 	if e != nil {
 		fail(w, 500, e)
 		return
 	}
 	write(w, 200, map[string]any{"data": map[string]any{"folders": folders, "assets": items}})
+}
+
+func (a *API) assetContent(w http.ResponseWriter, r *http.Request) {
+	id, e := url.PathUnescape(chi.URLParam(r, "id"))
+	if e != nil {
+		fail(w, 400, errText("invalid file id"))
+		return
+	}
+	object, e := a.assets.Open(r.Context(), id)
+	if e != nil {
+		fail(w, 404, e)
+		return
+	}
+	defer object.Body.Close()
+	contentType := object.ContentType
+	if contentType == "application/x-subrip" || strings.HasSuffix(strings.ToLower(object.Key), ".srt") {
+		contentType = "text/plain; charset=utf-8"
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Content-Disposition", "inline")
+	w.Header().Set("Content-Length", strconv.FormatInt(object.Size, 10))
+	_, _ = io.Copy(w, object.Body)
 }
 func (a *API) createFolder(w http.ResponseWriter, r *http.Request) {
 	var in folderInput

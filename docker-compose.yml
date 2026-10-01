@@ -19,7 +19,7 @@ services:
     environment: { S3_PUBLIC_ENDPOINT: "${S3_PUBLIC_ENDPOINT:-http://localhost:9000}" }
     depends_on: { postgres: { condition: service_healthy }, minio: { condition: service_healthy } }
     ports: ["8080:8080"]
-    volumes: ["${WHISPER_MODEL_HOST_PATH:-./models}:/models:ro"]
+    volumes: ["${WHISPER_MODEL_HOST_PATH:-./models}:/models"]
   worker:
     build: ./back
     command: /app/worker

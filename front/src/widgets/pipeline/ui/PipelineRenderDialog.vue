@@ -29,6 +29,8 @@ const {
   sendToRender,
   sourceURL,
   sourceURLs,
+  whisperModels,
+  defaultWhisperModelId,
   templatesLoading,
   timelineTime,
   updateEditorLayerTrack,
@@ -175,6 +177,8 @@ const {
           <LayerPanel
             :layers="renderEditor.draft.value.layers"
             :selected-layer-id="renderEditor.selectedLayerID.value"
+            :whisper-models="whisperModels"
+            :default-whisper-model-id="defaultWhisperModelId"
             @select="selectEditorLayer"
             @add="addEditorLayer"
             @update="updateEditorLayerTrack"
@@ -198,6 +202,8 @@ const {
             :layer="renderEditor.selectedLayer.value"
             :assets="assets"
             :folders="folders"
+            :whisper-models="whisperModels"
+            :default-whisper-model-id="defaultWhisperModelId"
             @update="renderEditor.selectedLayer.value && updateEditorLayerTrack(renderEditor.selectedLayer.value.id, $event)"
           />
         </div>

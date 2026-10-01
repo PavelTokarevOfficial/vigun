@@ -80,7 +80,7 @@ func (s *Service) EnqueueDownload(ctx context.Context, id string) error {
 	return e
 }
 
-func (s *Service) EnqueueProcess(ctx context.Context, id, templateID string, draft *composition.Config) error {
+func (s *Service) EnqueueProcess(ctx context.Context, id, templateID string, draft *composition.Config, whisperModel composition.WhisperModel) error {
 	var snapshot []byte
 	var e error
 	if draft == nil {
@@ -108,6 +108,14 @@ func (s *Service) EnqueueProcess(ctx context.Context, id, templateID string, dra
 	snapshot, e = s.attachClipSources(ctx, id, snapshot)
 	if e != nil {
 		return e
+	}
+	var renderSnapshot composition.Snapshot
+	if e = json.Unmarshal(snapshot, &renderSnapshot); e != nil {
+		return fmt.Errorf("decode render snapshot: %w", e)
+	}
+	renderSnapshot.WhisperModel = &whisperModel
+	if snapshot, e = json.Marshal(renderSnapshot); e != nil {
+		return fmt.Errorf("encode render snapshot: %w", e)
 	}
 	var jobID string
 	e = s.db.QueryRow(ctx, `WITH queued AS (

@@ -17,7 +17,7 @@ type MediaProcessor interface {
 	Render(context.Context, RenderInput) error
 }
 type Transcriber interface {
-	Transcribe(context.Context, string, string) error
+	Transcribe(context.Context, string, string, string) error
 }
 type RenderInput struct {
 	SourcePath, SubtitlePath, OutputPath string

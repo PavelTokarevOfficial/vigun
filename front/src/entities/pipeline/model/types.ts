@@ -30,6 +30,8 @@ export type RenderedVideo = {
   templateName: string
   url: string
   createdAt: string
+  renderDurationSeconds: number
+  whisperModel: string
 }
 
 export type ProcessingJob = {

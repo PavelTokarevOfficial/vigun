@@ -12,6 +12,7 @@ import (
 type ClaimedJob struct {
 	ID, ClipID, Type, ClipURL string
 	SourceKey                 string
+	WhisperModel              string
 	TemplateSnapshot          []byte
 	Timeline                  []byte
 }
@@ -99,6 +100,7 @@ func (j *Jobs) Claim(ctx context.Context) (ClaimedJob, error) {
 		FROM next JOIN clips c ON c.id=next.clip_id
 		WHERE j.id=next.id
 		RETURNING j.id,j.clip_id,j.type,c.twitch_url,j.template_snapshot,c.edit_timeline,
+		COALESCE(j.template_snapshot #>> '{whisperModel,id}',''),
 		COALESCE(
 			(SELECT storage_key FROM media_files WHERE clip_id=c.id AND type='source' ORDER BY created_at DESC LIMIT 1),
 			(SELECT storage_key FROM source_videos WHERE id=c.source_video_id),
@@ -108,7 +110,7 @@ func (j *Jobs) Claim(ctx context.Context) (ClaimedJob, error) {
 			 LEFT JOIN source_videos v ON v.id=parent.source_video_id
 			 LEFT JOIN assets a ON a.id=parent.source_asset_id
 			 WHERE parent.id=c.source_clip_id),
-			'')`).Scan(&x.ID, &x.ClipID, &x.Type, &x.ClipURL, &x.TemplateSnapshot, &x.Timeline, &x.SourceKey)
+			'')`).Scan(&x.ID, &x.ClipID, &x.Type, &x.ClipURL, &x.TemplateSnapshot, &x.Timeline, &x.WhisperModel, &x.SourceKey)
 	return x, e
 }
 func (j *Jobs) Step(ctx context.Context, id, clipID, step, status string, progress int) error {

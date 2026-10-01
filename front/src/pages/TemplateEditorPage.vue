@@ -32,6 +32,8 @@ const previewAssetId = ref<string | null>(null)
 const error = ref('')
 const loading = ref(true)
 const saving = ref(false)
+const whisperModels = ref<{ id: string; name: string; type: string }[]>([])
+const defaultWhisperModelId = ref('')
 function setTrainMode(enabled: boolean) {
   editor.updateConfig({
     train: {
@@ -66,9 +68,17 @@ function removeTransitionAsset(id: string) {
 async function load() {
   loading.value = true
   try {
-    const library = await readData<AssetLibrary>(await fetch('/api/assets'))
+    const [library, whisper] = await Promise.all([
+      readData<AssetLibrary>(await fetch('/api/assets')),
+      readData<{
+        models: { id: string; name: string; type: string; installed: boolean }[]
+        settings: { activeModel: string }
+      }>(await fetch('/api/settings/whisper')),
+    ])
     assets.value = library.assets
     folders.value = library.folders
+    whisperModels.value = whisper.models.filter((model) => model.installed)
+    defaultWhisperModelId.value = whisper.settings.activeModel
     if (!isNew.value) {
       const item = await readData<VideoTemplate>(
         await fetch(`/api/templates/${route.params.id}`),
@@ -194,6 +204,8 @@ onBeforeRouteLeave(() =>
         :train="editor.draft.value.train"
         :assets="assets"
         :folders="folders"
+        :whisper-models="whisperModels"
+        :default-whisper-model-id="defaultWhisperModelId"
         show-train-controls
         @select="editor.selectedLayerID.value = $event"
         @add="editor.addLayer"
@@ -216,6 +228,8 @@ onBeforeRouteLeave(() =>
         :layer="editor.selectedLayer.value"
         :assets="assets"
         :folders="folders"
+        :whisper-models="whisperModels"
+        :default-whisper-model-id="defaultWhisperModelId"
         @update="editor.selectedLayer.value && editor.updateLayer(editor.selectedLayer.value.id, $event)"
       />
     </div>

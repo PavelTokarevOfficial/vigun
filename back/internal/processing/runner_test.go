@@ -73,7 +73,7 @@ type fakeTranscriber struct {
 	empty bool
 }
 
-func (t *fakeTranscriber) Transcribe(_ context.Context, _, outputBase string) error {
+func (t *fakeTranscriber) Transcribe(_ context.Context, _, outputBase, _ string) error {
 	t.calls++
 	if t.empty {
 		return os.WriteFile(outputBase+".srt", nil, 0o600)

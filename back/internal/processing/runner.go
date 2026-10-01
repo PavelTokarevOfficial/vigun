@@ -23,6 +23,7 @@ type Input struct {
 	Width, Height, Blur    int
 	Preset                 string
 	TemplateSnapshot       []byte
+	WhisperModel           string
 	Progress               func(step, clipStatus string, percent int) error
 }
 type Result struct{ SourceKey, AudioKey, SubtitleKey, RenderKey string }
@@ -103,6 +104,9 @@ func (r *Runner) Process(ctx context.Context, in Input) (Result, error) {
 		renderName = "vertical"
 	}
 	out := Result{SourceKey: "sources/" + in.ClipID + "/source.mp4", AudioKey: "audio/" + in.ClipID + "/audio.wav", SubtitleKey: "subtitles/" + in.ClipID + "/subtitles.srt", RenderKey: "renders/" + in.ClipID + "/" + renderName + ".mp4"}
+	if in.WhisperModel != "" && in.WhisperModel != "tiny" {
+		out.SubtitleKey = "subtitles/" + in.ClipID + "/" + in.WhisperModel + ".srt"
+	}
 	requiresSubtitles, e := requiresSubtitleLayer(in.TemplateSnapshot, in.Width, in.Height, in.Blur)
 	if e != nil {
 		return out, e
@@ -147,7 +151,7 @@ func (r *Runner) Process(ctx context.Context, in Input) (Result, error) {
 				return out, e
 			}
 			base := filepath.Join(d, "subtitles")
-			if e = r.Transcriber.Transcribe(ctx, audio, base); e != nil {
+			if e = r.Transcriber.Transcribe(ctx, audio, base, in.WhisperModel); e != nil {
 				return out, fmt.Errorf("transcribe: %w", e)
 			}
 			if e = r.putFile(ctx, out.SubtitleKey, base+".srt", "application/x-subrip"); e != nil {

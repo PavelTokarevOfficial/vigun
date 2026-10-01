@@ -21,9 +21,10 @@ defineEmits<{
 
 <template>
   <article
-    draggable="true"
-    class="group relative cursor-grab overflow-hidden rounded-xl border border-slate-200 bg-white transition hover:border-violet-300 active:cursor-grabbing"
-    @dragstart="$emit('dragStart', $event, asset)"
+    :draggable="asset.managed"
+    class="group relative overflow-hidden rounded-xl border border-slate-200 bg-white transition hover:border-violet-300"
+    :class="asset.managed ? 'cursor-grab active:cursor-grabbing' : ''"
+    @dragstart="asset.managed && $emit('dragStart', $event, asset)"
     @dragend="$emit('dragEnd')"
   >
     <button
@@ -45,6 +46,12 @@ defineEmits<{
       >
         Аудиофайл
       </div>
+      <div
+        v-else-if="asset.kind === 'file'"
+        class="flex aspect-video items-center justify-center bg-slate-100 px-3 text-center text-sm text-slate-600"
+      >
+        Служебный файл
+      </div>
       <img
         v-else
         :src="asset.url"
@@ -57,9 +64,15 @@ defineEmits<{
         <p class="mt-1 text-xs text-slate-500">
           {{ asset.kind }} · {{ Math.round(asset.size / 1024) }} KB
         </p>
+        <p
+          v-if="!asset.managed"
+          class="mt-1 truncate text-xs font-medium text-violet-700"
+        >
+          Служебный · {{ asset.origin }}
+        </p>
       </div>
     </button>
-    <DropdownMenu>
+    <DropdownMenu v-if="asset.managed">
       <DropdownMenuTrigger as-child
         ><button
           type="button"

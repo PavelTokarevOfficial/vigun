@@ -4,7 +4,8 @@ This is a modular monolith for importing Twitch Clips and rendering vertical sho
 
 - `back/` is Go. Keep feature/application code independent from Postgres, S3, Rod, FFmpeg and Whisper.
 - `front/` is Vue 3 + TypeScript and follows FSD: app → pages → widgets → features → entities → shared.
-- Do not add UI libraries beyond the approved shadcn-vue `Sonner` notification integration; use Tailwind and local base components for the rest of the interface.
+- Prefer shadcn-vue components for standard interactive UI controls. If a needed shadcn-vue component is missing, install it through the project shadcn configuration before writing a bespoke replacement. Use Tailwind for layout and project-specific presentation; do not add unrelated UI libraries.
+- Keep pages focused on functional content. Do not add generic page-title/description hero blocks such as “Settings” plus explanatory filler when navigation and section headings already provide that context.
 - Database changes require a new `back/migrations` pair; never auto-sync schemas.
 - Media is stored through the storage boundary, never in the repository or database blobs.
 - Keep browser automation isolated behind `ClipDownloader`; do not leak Rod selectors.

@@ -8,12 +8,21 @@ import type {
 } from '@/entities/asset/model/types'
 import type { Layer } from '@/entities/template/model/types'
 import AppButton from '@/shared/ui/AppButton.vue'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/shared/ui/shadcn/select'
 import AssetPickerDialog from './AssetPickerDialog.vue'
 
 const props = defineProps<{
   layer: Layer | null
   assets: Asset[]
   folders: AssetFolder[]
+  whisperModels?: { id: string; name: string; type: string }[]
+  defaultWhisperModelId?: string
 }>()
 const emit = defineEmits<{ update: [patch: Partial<Layer>] }>()
 const pickerOpen = ref(false)
@@ -245,6 +254,33 @@ function setVideoSource(source: 'clip' | 'asset') {
       >
 
       <template v-if="layer.type === 'subtitles'">
+        <div class="block text-sm font-medium">
+          <span>Модель Whisper</span>
+          <Select
+            :model-value="layer.whisperModelId || defaultWhisperModelId"
+            @update:model-value="emit('update', { whisperModelId: String($event) })"
+          >
+            <SelectTrigger class="mt-1 w-full font-normal">
+              <SelectValue placeholder="Выберите скачанную модель" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem
+                v-for="model in whisperModels"
+                :key="model.id"
+                :value="model.id"
+              >
+                {{ model.name }}
+                · {{ model.type }}
+              </SelectItem>
+            </SelectContent>
+          </Select>
+          <span
+            v-if="!whisperModels?.length"
+            class="mt-1 block text-xs font-normal text-amber-700"
+          >
+            Сначала скачайте модель в настройках Whisper.
+          </span>
+        </div>
         <label class="block text-sm"
           >Размер шрифта<input
             class="mt-1 w-full"
