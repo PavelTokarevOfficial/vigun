@@ -20,7 +20,10 @@ type Service struct{ db *pgxpool.Pool }
 
 func New(db *pgxpool.Pool) *Service { return &Service{db} }
 func (s *Service) List(ctx context.Context) ([]Streamer, error) {
-	rows, e := s.db.Query(ctx, "SELECT id,twitch_login,display_name,COALESCE(twitch_user_id,''),priority,subscribed FROM streamers ORDER BY priority DESC, created_at DESC")
+	rows, e := s.db.Query(ctx, `SELECT id,twitch_login,display_name,COALESCE(twitch_user_id,''),priority,subscribed
+		FROM streamers
+		WHERE twitch_login <> '__video_library__'
+		ORDER BY priority DESC, created_at DESC`)
 	if e != nil {
 		return nil, e
 	}
