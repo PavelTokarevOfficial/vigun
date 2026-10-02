@@ -71,50 +71,60 @@ function formatRenderDuration(seconds: number) {
       <h3 class="min-h-10 font-semibold">
         Скачанные · {{ downloaded.length }}
       </h3>
-      <div class="mt-3 space-y-3">
+      <div
+        class="mt-3 space-y-3 xl:max-h-[calc(100vh-12rem)] xl:overflow-y-auto xl:overscroll-contain xl:pr-2 xl:[scrollbar-width:none] xl:[&::-webkit-scrollbar]:hidden"
+      >
         <p v-if="!downloaded.length" class="text-sm text-slate-500">
           Пока пусто.
         </p>
         <article
           v-for="clip in downloaded"
           :key="clip.id"
-          class="relative overflow-hidden rounded-xl"
+          class="min-w-0 rounded-2xl border border-slate-200 bg-white p-2 pb-3 shadow-sm"
         >
-          <img
-            v-if="clip.thumbnailUrl"
-            :src="clip.thumbnailUrl"
-            :alt="`Превью клипа: ${clip.title}`"
-            class="aspect-video w-full object-cover"
-            :class="clip.hasFragment ? 'brightness-50' : ''"
-            draggable="false"
-          >
           <div
-            v-else
-            class="grid aspect-video w-full place-content-center bg-gradient-to-br from-violet-700 to-slate-900 text-white"
-            :class="clip.hasFragment ? 'brightness-50' : ''"
+            class="relative overflow-hidden rounded-xl bg-slate-900 shadow-sm"
           >
-            <Film class="size-10 opacity-70" />
+            <img
+              v-if="clip.thumbnailUrl"
+              :src="clip.thumbnailUrl"
+              :alt="`Превью клипа: ${clip.title}`"
+              class="aspect-video w-full object-cover"
+              :class="clip.hasFragment ? 'brightness-50' : ''"
+              draggable="false"
+            >
+            <div
+              v-else
+              class="grid aspect-video w-full place-content-center bg-gradient-to-br from-violet-700 to-slate-900 text-white"
+              :class="clip.hasFragment ? 'brightness-50' : ''"
+            >
+              <Film class="size-10 opacity-70" />
+            </div>
+            <b
+              class="absolute inset-x-0 top-0 block truncate px-3 py-1 pr-12 text-white [-webkit-text-stroke:2px_black] [paint-order:stroke_fill]"
+              :title="clip.title"
+              >{{
+                clip.title
+              }}</b
+            >
+            <span
+              v-if="clip.hasFragment"
+              class="absolute top-3 right-3 grid size-7 place-content-center rounded-full bg-emerald-500 text-white shadow"
+              title="Из исходника уже создан фрагмент"
+            >
+              <Check :size="17" :stroke-width="3" />
+            </span>
           </div>
-
-          <span
-            v-if="clip.hasFragment"
-            class="absolute top-3 right-3 grid size-7 place-content-center rounded-full bg-emerald-500 text-white shadow"
-            title="Из исходника уже создан фрагмент"
-          >
-            <Check :size="17" :stroke-width="3" />
-          </span>
-
-          <div
-            class="absolute inset-x-0 top-0 min-w-0 px-3 py-1 pr-12 text-white [-webkit-text-stroke:2px_black] [paint-order:stroke_fill]"
-          >
-            <b class="block truncate" :title="clip.title">{{ clip.title }}</b>
-            <p>{{ clip.streamerName }} · {{ statusText(clip) }}</p>
+          <div class="px-1 pt-3 text-sm text-slate-600">
+            <ul class="space-y-1">
+              <li>{{ clip.streamerName }}</li>
+              <li>{{ statusText(clip) }}</li>
+            </ul>
             <p v-if="clip.error" class="mt-1 text-sm text-red-600">
               {{ clip.error }}
             </p>
           </div>
-
-          <div class="absolute right-0 bottom-0 flex gap-2 p-3">
+          <div class="flex flex-wrap justify-end gap-2 px-1 pt-2">
             <AppButton
               v-if="!clip.hasSource && !['pending', 'running'].includes(clip.lastJobStatus)"
               class="grid h-8 w-8 place-content-center"
@@ -204,7 +214,9 @@ function formatRenderDuration(seconds: number) {
           </button>
         </div>
       </div>
-      <div class="mt-3 space-y-3">
+      <div
+        class="mt-3 space-y-3 xl:max-h-[calc(100vh-12rem)] xl:overflow-y-auto xl:overscroll-contain xl:pr-2 xl:[scrollbar-width:none] xl:[&::-webkit-scrollbar]:hidden"
+      >
         <p
           v-if="!readyFragments.length && !fragmentJobs.length"
           class="text-sm text-slate-500"
@@ -214,10 +226,10 @@ function formatRenderDuration(seconds: number) {
         <article
           v-for="job in fragmentJobs"
           :key="`fragment-job-${job.id}`"
-          class="relative overflow-hidden rounded-xl border border-violet-200 bg-violet-50"
+          class="min-w-0 rounded-2xl border border-slate-200 bg-white p-2 pb-3 shadow-sm"
         >
           <div
-            class="grid aspect-video w-full place-content-center bg-gradient-to-br from-violet-100 to-slate-200 px-4 text-center"
+            class="relative grid aspect-video w-full place-content-center overflow-hidden rounded-xl bg-gradient-to-br from-violet-100 to-slate-200 px-4 text-center shadow-sm"
           >
             <span
               class="block max-w-full truncate text-sm font-semibold text-violet-800"
@@ -226,100 +238,112 @@ function formatRenderDuration(seconds: number) {
                 job.clipTitle || 'Новый фрагмент'
               }}</span
             >
-          </div>
-          <div class="absolute inset-x-0 top-0 p-3 text-slate-900">
-            <b>Создание фрагмента</b>
-            <p class="text-xs">{{ renderJobStatus(job) }}</p>
-          </div>
-          <div class="absolute inset-x-3 bottom-3 flex items-end gap-2">
-            <div class="min-w-0 flex-1">
-              <div class="h-1.5 overflow-hidden rounded-full bg-white/80">
-                <div
-                  class="h-full rounded-full bg-violet-600 transition-all"
-                  :style="{ width: `${Math.max(job.status === 'pending' ? 4 : job.progress, 4)}%` }"
-                />
-              </div>
-            </div>
-            <AppButton
-              v-if="['pending', 'running'].includes(job.status)"
-              variant="danger"
-              class="grid size-8 place-content-center"
-              :disabled="busy === job.id"
-              title="Остановить создание фрагмента"
-              @click="cancelJob(job.id)"
+            <b
+              class="absolute inset-x-0 top-0 block truncate p-3 text-left text-slate-900"
+              >Создание фрагмента</b
             >
-              <X :size="16" />
-            </AppButton>
+          </div>
+          <div class="px-1 pt-3">
+            <p class="mb-2 text-xs text-slate-600">
+              {{ renderJobStatus(job) }}
+            </p>
+            <div class="flex items-end gap-2">
+              <div class="min-w-0 flex-1">
+                <div class="h-1.5 overflow-hidden rounded-full bg-white/80">
+                  <div
+                    class="h-full rounded-full bg-violet-600 transition-all"
+                    :style="{ width: `${Math.max(job.status === 'pending' ? 4 : job.progress, 4)}%` }"
+                  />
+                </div>
+              </div>
+              <AppButton
+                v-if="['pending', 'running'].includes(job.status)"
+                variant="danger"
+                class="grid size-8 place-content-center"
+                :disabled="busy === job.id"
+                title="Остановить создание фрагмента"
+                @click="cancelJob(job.id)"
+              >
+                <X :size="16" />
+              </AppButton>
+            </div>
           </div>
         </article>
         <article
           v-for="clip in readyFragments"
           :key="clip.id"
-          class="relative overflow-hidden rounded-xl ring-offset-2"
+          class="min-w-0 rounded-2xl border border-slate-200 bg-white p-2 pb-3 shadow-sm ring-offset-2"
           :class="[selectedTrainClipIDs.has(clip.id) ? 'ring-2 ring-violet-500' : '']"
           :tabindex="trainSelectionMode ? 0 : undefined"
           @click="trainSelectionMode && toggleTrainClip(clip.id)"
           @keydown.enter="trainSelectionMode && toggleTrainClip(clip.id)"
         >
-          <img
-            v-if="clip.thumbnailUrl"
-            :src="clip.thumbnailUrl"
-            :alt="`Превью фрагмента: ${clip.title}`"
-            :class="[
-              'aspect-video w-full object-cover',
-              usedFragmentIDs.has(clip.id) ? 'brightness-50' : '',
-            ]"
-            draggable="false"
-          >
           <div
-            v-else
-            class="grid aspect-video w-full place-content-center bg-gradient-to-br from-violet-700 to-slate-900 text-white"
-            :class="usedFragmentIDs.has(clip.id) ? 'brightness-50' : ''"
+            class="relative overflow-hidden rounded-xl bg-slate-900 shadow-sm"
           >
-            <Film class="size-10 opacity-70" />
+            <img
+              v-if="clip.thumbnailUrl"
+              :src="clip.thumbnailUrl"
+              :alt="`Превью фрагмента: ${clip.title}`"
+              :class="['aspect-video w-full object-cover', usedFragmentIDs.has(clip.id) ? 'brightness-50' : '']"
+              draggable="false"
+            >
+            <div
+              v-else
+              class="grid aspect-video w-full place-content-center bg-gradient-to-br from-violet-700 to-slate-900 text-white"
+              :class="usedFragmentIDs.has(clip.id) ? 'brightness-50' : ''"
+            >
+              <Film class="size-10 opacity-70" />
+            </div>
+            <b
+              class="absolute inset-x-0 top-0 block truncate px-3 py-1 pr-12 text-white [-webkit-text-stroke:2px_black] [paint-order:stroke_fill]"
+              :title="clip.title"
+              >{{
+                clip.title
+              }}</b
+            >
+            <span
+              v-if="usedFragmentIDs.has(clip.id)"
+              class="absolute top-3 right-3 grid size-7 place-content-center rounded-full bg-emerald-500 text-white shadow"
+              title="Фрагмент уже использован в рендере"
+            >
+              <Check :size="17" :stroke-width="3" />
+            </span>
           </div>
-          <div
-            class="absolute inset-x-0 top-0 min-w-0 px-3 py-1 pr-12 text-white [-webkit-text-stroke:2px_black] [paint-order:stroke_fill]"
-          >
-            <b class="block truncate" :title="clip.title">{{ clip.title }}</b>
-            <p>{{ clip.streamerName }}</p>
-          </div>
-          <span
-            v-if="usedFragmentIDs.has(clip.id)"
-            class="absolute top-3 right-3 grid size-7 place-content-center rounded-full bg-emerald-500 text-white shadow"
-            title="Фрагмент уже использован в рендере"
-          >
-            <Check :size="17" :stroke-width="3" />
-          </span>
-          <span
-            v-if="trainSelectionMode"
-            class="absolute left-3 bottom-3 grid size-7 place-content-center rounded-full bg-white text-violet-700"
-          >
-            <Check v-if="selectedTrainClipIDs.has(clip.id)" :size="17" />
-          </span>
-          <div v-else class="absolute right-0 bottom-0 flex gap-2 p-3">
-            <AppButton
-              class="grid h-8 w-8 place-content-center"
-              @click.stop="openClipPreview(clip)"
+          <div class="px-1 pt-3">
+            <ul class="space-y-1 text-sm text-slate-600">
+              <li class="truncate">{{ clip.streamerName }}</li>
+            </ul>
+            <span
+              v-if="trainSelectionMode"
+              class="mt-2 grid size-8 shrink-0 place-content-center rounded-full border border-violet-200 bg-violet-50 text-violet-700"
             >
-              <Play :size="16" />
-            </AppButton>
-            <AppButton
-              v-if="!isProcessQueued(clip)"
-              class="grid h-8 w-8 place-content-center"
-              title="Отправить на рендер"
-              @click.stop="openTemplateChooser(clip.id)"
-            >
-              <Plus :size="16" />
-            </AppButton>
-            <AppButton
-              variant="secondary"
-              class="grid h-8 w-8 place-content-center"
-              title="Удалить фрагмент"
-              @click.stop="remove(clip)"
-            >
-              <Trash :size="16" />
-            </AppButton>
+              <Check v-if="selectedTrainClipIDs.has(clip.id)" :size="17" />
+            </span>
+            <div v-else class="mt-2 flex justify-end gap-2">
+              <AppButton
+                class="grid h-8 w-8 place-content-center"
+                @click.stop="openClipPreview(clip)"
+              >
+                <Play :size="16" />
+              </AppButton>
+              <AppButton
+                v-if="!isProcessQueued(clip)"
+                class="grid h-8 w-8 place-content-center"
+                title="Отправить на рендер"
+                @click.stop="openTemplateChooser(clip.id)"
+              >
+                <Plus :size="16" />
+              </AppButton>
+              <AppButton
+                variant="secondary"
+                class="grid h-8 w-8 place-content-center"
+                title="Удалить фрагмент"
+                @click.stop="remove(clip)"
+              >
+                <Trash :size="16" />
+              </AppButton>
+            </div>
           </div>
         </article>
       </div>
@@ -329,7 +353,9 @@ function formatRenderDuration(seconds: number) {
       class="relative min-w-0 xl:col-span-2 xl:before:absolute xl:before:inset-y-0 xl:before:-left-4 xl:before:border-l xl:before:border-dashed xl:before:border-slate-300 xl:before:content-['']"
     >
       <h3 class="min-h-10 font-semibold">Готовые · {{ videos.length }}</h3>
-      <div class="grid xl:grid-cols-2 gap-4 xl:gap-8 mt-3">
+      <div
+        class="mt-3 grid gap-4 xl:max-h-[calc(100vh-12rem)] xl:grid-cols-2 xl:gap-8 xl:overflow-y-auto xl:overscroll-contain xl:pr-2 xl:[scrollbar-width:none] xl:[&::-webkit-scrollbar]:hidden"
+      >
         <p
           v-if="!videos.length && !renderJobs.length"
           class="text-sm text-slate-500"
@@ -339,10 +365,10 @@ function formatRenderDuration(seconds: number) {
         <article
           v-for="job in renderJobs"
           :key="`rendering-${job.id}`"
-          class="relative overflow-hidden rounded-xl border border-violet-200 bg-violet-50"
+          class="min-w-0 rounded-2xl border border-slate-200 bg-white p-2 pb-3 shadow-sm"
         >
           <div
-            class="grid aspect-video w-full place-content-center bg-gradient-to-br from-violet-100 to-slate-200"
+            class="relative grid aspect-video w-full place-content-center overflow-hidden rounded-xl bg-gradient-to-br from-violet-100 to-slate-200 shadow-sm"
           >
             <span
               class="block max-w-full truncate px-3 text-sm font-semibold text-violet-800"
@@ -355,84 +381,90 @@ function formatRenderDuration(seconds: number) {
                 {{ job.clipTitle || 'Видео' }}
               </template>
             </span>
-          </div>
-          <div class="absolute inset-x-0 top-0 p-3 text-slate-900">
             <b
-              class="block truncate"
+              class="absolute inset-x-0 top-0 block truncate p-3 text-left text-slate-900"
               :title="job.templateName || 'Рендер видео'"
               >{{
                 job.templateName || 'Рендер видео'
               }}</b
             >
-            <p class="text-xs">{{ renderJobStatus(job) }}</p>
           </div>
-          <div class="absolute inset-x-3 bottom-3 flex items-end gap-2">
-            <div class="min-w-0 flex-1">
-              <div class="h-1.5 overflow-hidden rounded-full bg-white/80">
-                <div
-                  class="h-full rounded-full bg-violet-600 transition-all"
-                  :class="renderJobStatusClass(job)"
-                  :style="{ width: `${Math.max(job.status === 'pending' ? 4 : job.progress, 4)}%` }"
-                />
+          <div class="px-1 pt-3">
+            <p class="mb-2 text-xs text-slate-600">
+              {{ renderJobStatus(job) }}
+            </p>
+            <div class="flex items-end gap-2">
+              <div class="min-w-0 flex-1">
+                <div class="h-1.5 overflow-hidden rounded-full bg-white/80">
+                  <div
+                    class="h-full rounded-full bg-violet-600 transition-all"
+                    :class="renderJobStatusClass(job)"
+                    :style="{ width: `${Math.max(job.status === 'pending' ? 4 : job.progress, 4)}%` }"
+                  />
+                </div>
+                <p
+                  v-if="job.status === 'failed' && job.error"
+                  class="mt-1 line-clamp-1 text-xs text-red-700"
+                >
+                  {{ job.error.split('\n')[0] }}
+                </p>
               </div>
-              <p
-                v-if="job.status === 'failed' && job.error"
-                class="mt-1 line-clamp-1 text-xs text-red-700"
+              <AppButton
+                v-if="['pending', 'running'].includes(job.status)"
+                variant="danger"
+                class="grid size-8 place-content-center"
+                :disabled="busy === job.id"
+                title="Остановить рендер"
+                @click="cancelJob(job.id)"
               >
-                {{ job.error.split('\n')[0] }}
-              </p>
+                <X :size="16" />
+              </AppButton>
             </div>
-            <AppButton
-              v-if="['pending', 'running'].includes(job.status)"
-              variant="danger"
-              class="grid size-8 place-content-center"
-              :disabled="busy === job.id"
-              title="Остановить рендер"
-              @click="cancelJob(job.id)"
-            >
-              <X :size="16" />
-            </AppButton>
           </div>
         </article>
         <article
           v-for="video in videos"
           :key="video.id"
-          class="relative overflow-hidden rounded-xl"
+          class="min-w-0 rounded-2xl border border-slate-200 bg-white p-2 pb-3 shadow-sm"
         >
-          <img
-            v-if="video.thumbnailUrl"
-            :src="video.thumbnailUrl"
-            :alt="`Превью клипа: ${video.title}`"
-            class="aspect-video w-full object-cover"
-            draggable="false"
-          >
           <div
-            v-else
-            class="grid aspect-video w-full place-content-center bg-gradient-to-br from-violet-700 to-slate-900 text-white"
+            class="relative overflow-hidden rounded-xl bg-slate-900 shadow-sm"
           >
-            <Film class="size-10 opacity-70" />
+            <img
+              v-if="video.thumbnailUrl"
+              :src="video.thumbnailUrl"
+              :alt="`Превью клипа: ${video.title}`"
+              class="aspect-video w-full object-cover"
+              draggable="false"
+            >
+            <div
+              v-else
+              class="grid aspect-video w-full place-content-center bg-gradient-to-br from-violet-700 to-slate-900 text-white"
+            >
+              <Film class="size-10 opacity-70" />
+            </div>
+            <b
+              class="absolute inset-x-0 top-0 block truncate px-3 py-1 text-white [-webkit-text-stroke:2px_black] [paint-order:stroke_fill]"
+              :title="video.title"
+              >{{
+                video.title
+              }}</b
+            >
           </div>
-
-          <div
-            class="absolute inset-x-0 top-0 min-w-0 px-3 py-1 text-white [-webkit-text-stroke:2px_black] [paint-order:stroke_fill]"
-          >
-            <b class="block truncate" :title="video.title">{{ video.title }}</b>
-            <p>
-              {{ video.streamer }}
-              <template v-if="video.templateName">
-                · {{ video.templateName }}</template
-              >
-              · {{ new Date(video.createdAt).toLocaleString() }}
-              <template v-if="video.renderDurationSeconds > 0">
-                · рендер {{ formatRenderDuration(video.renderDurationSeconds) }}
-              </template>
-              <template v-if="video.whisperModel">
-                · Whisper {{ video.whisperModel }}
-              </template>
-            </p>
+          <div class="px-1 pt-3 text-sm text-slate-600">
+            <ul class="space-y-1">
+              <li>{{ video.streamer }}</li>
+              <li v-if="video.templateName">{{ video.templateName }}</li>
+              <li>{{ new Date(video.createdAt).toLocaleString() }}</li>
+              <li v-if="video.renderDurationSeconds > 0">
+                Рендер: {{ formatRenderDuration(video.renderDurationSeconds) }}
+              </li>
+              <li v-if="video.whisperModel">
+                Whisper: {{ video.whisperModel }}
+              </li>
+            </ul>
           </div>
-
-          <div class="absolute right-0 bottom-0 flex gap-2 p-3">
+          <div class="flex flex-wrap justify-end gap-2 px-1 pt-2">
             <a
               :href="video.twitchUrl"
               target="_blank"
