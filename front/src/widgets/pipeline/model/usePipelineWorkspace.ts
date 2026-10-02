@@ -587,29 +587,12 @@ export function usePipelineWorkspace() {
       return
     }
 
-    busy.value = clip.id
-    try {
-      const response = await fetch(`/api/clips/${clip.id}/source`)
-      if (!response.ok) {
-        throw new Error(
-          await readError(response, 'Не удалось открыть скачанное видео'),
-        )
-      }
-      const source = await readData<{ url: string }>(response)
-      previewVideo.value = {
-        key: `source-${clip.id}`,
-        title: clip.title,
-        streamer: clip.streamerName,
-        url: source.url,
-        mode: 'video',
-      }
-    } catch (cause) {
-      error.value =
-        cause instanceof Error
-          ? cause.message
-          : 'Не удалось открыть скачанное видео'
-    } finally {
-      busy.value = ''
+    previewVideo.value = {
+      key: `source-${clip.id}`,
+      title: clip.title,
+      streamer: clip.streamerName,
+      url: `/api/clips/${clip.id}/content`,
+      mode: 'video',
     }
   }
 

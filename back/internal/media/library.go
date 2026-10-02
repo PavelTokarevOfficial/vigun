@@ -21,6 +21,22 @@ func NewLibrary(db *pgxpool.Pool, storage Storage) *Library {
 }
 
 func (l *Library) SourceURL(ctx context.Context, clipID string) (string, error) {
+	key, err := l.sourceKey(ctx, clipID)
+	if err != nil {
+		return "", err
+	}
+	return l.storage.PresignGet(ctx, key, 15*time.Minute)
+}
+
+func (l *Library) Source(ctx context.Context, clipID string) (Object, error) {
+	key, err := l.sourceKey(ctx, clipID)
+	if err != nil {
+		return Object{}, err
+	}
+	return l.storage.Get(ctx, key)
+}
+
+func (l *Library) sourceKey(ctx context.Context, clipID string) (string, error) {
 	var key string
 	if err := l.db.QueryRow(ctx, `SELECT COALESCE(m.storage_key,v.storage_key,a.storage_key) FROM clips c
 		LEFT JOIN LATERAL (SELECT storage_key FROM media_files WHERE clip_id=c.id AND type='source' ORDER BY created_at DESC LIMIT 1) m ON true
@@ -32,7 +48,7 @@ func (l *Library) SourceURL(ctx context.Context, clipID string) (string, error) 
 		}
 		return "", err
 	}
-	return l.storage.PresignGet(ctx, key, 15*time.Minute)
+	return key, nil
 }
 
 func (l *Library) DeleteSourceOrClip(ctx context.Context, clipID string) error {

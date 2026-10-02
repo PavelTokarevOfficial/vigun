@@ -114,6 +114,7 @@ func (a *API) Router() http.Handler {
 	r.Post("/api/clips/import", a.importClip)
 	r.Get("/api/clips", a.localClips)
 	r.Get("/api/clips/{id}/source", a.clipSource)
+	r.Get("/api/clips/{id}/content", a.streamClipSource)
 	r.Delete("/api/clips/{id}", a.deleteClip)
 	r.Post("/api/clips/{id}/download", a.download)
 	r.Post("/api/clips/{id}/process", a.process)
@@ -450,6 +451,26 @@ func (a *API) clipSource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	write(w, 200, map[string]any{"data": map[string]string{"url": url}})
+}
+func (a *API) streamClipSource(w http.ResponseWriter, r *http.Request) {
+	object, e := a.library.Source(r.Context(), chi.URLParam(r, "id"))
+	if e != nil {
+		fail(w, 404, e)
+		return
+	}
+	defer object.Body.Close()
+	contentType := object.ContentType
+	if contentType == "" || contentType == "application/octet-stream" || contentType == "binary/octet-stream" {
+		contentType = "video/mp4"
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Content-Disposition", "inline")
+	if object.Size >= 0 {
+		w.Header().Set("Content-Length", strconv.FormatInt(object.Size, 10))
+	}
+	if _, e = io.Copy(w, object.Body); e != nil {
+		a.log.Error("stream clip source", "clip_id", chi.URLParam(r, "id"), "error", e)
+	}
 }
 func (a *API) remoteClips(w http.ResponseWriter, r *http.Request) {
 	startedAt, endedAt, e := clipWindow(r)
@@ -826,6 +847,12 @@ func (a *API) assetContent(w http.ResponseWriter, r *http.Request) {
 	}
 	defer object.Body.Close()
 	contentType := object.ContentType
+	if (contentType == "" || contentType == "application/octet-stream" || contentType == "binary/octet-stream") && strings.HasSuffix(strings.ToLower(object.Key), ".mp4") {
+		contentType = "video/mp4"
+	}
+	if (contentType == "" || contentType == "application/octet-stream" || contentType == "binary/octet-stream") && strings.HasSuffix(strings.ToLower(object.Key), ".mov") {
+		contentType = "video/quicktime"
+	}
 	if contentType == "application/x-subrip" || strings.HasSuffix(strings.ToLower(object.Key), ".srt") {
 		contentType = "text/plain; charset=utf-8"
 	}

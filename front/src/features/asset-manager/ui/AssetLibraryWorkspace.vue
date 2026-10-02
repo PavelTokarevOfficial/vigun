@@ -76,6 +76,7 @@ function endDrag() {
   dropTargetID.value = undefined
 }
 function setDropTarget(id: string | null) {
+  if (folders.value.some((folder) => folder.id === id && folder.system)) return
   if (draggedItem.value) dropTargetID.value = id
 }
 function clearDropTarget(id: string | null) {
@@ -88,6 +89,8 @@ async function dropIntoFolder(parentID: string | null) {
   const item = draggedItem.value
   endDrag()
   if (!item || busy.value) return
+  if (folders.value.some((folder) => folder.id === parentID && folder.system))
+    return
   if (item.kind === 'asset') {
     const asset = assets.value.find((value) => value.id === item.id)
     if (asset) await manager.moveAsset(asset, parentID)
@@ -148,14 +151,14 @@ onMounted(() => void manager.load())
         <div
           v-for="item in folderTree"
           :key="item.folder.id"
-          draggable="true"
+          :draggable="!item.folder.system"
           class="group mt-1 flex w-full min-w-0 items-center gap-1 truncate rounded py-1 pr-2 text-left text-sm hover:bg-slate-100"
           :class="[
             currentFolderID === item.folder.id ? 'bg-violet-50 text-violet-800' : '',
             isDropTarget(item.folder.id) ? 'ring-2 ring-violet-500' : '',
           ]"
           :style="{ paddingLeft: `${24 + item.depth * 16}px` }"
-          @dragstart="startDrag($event, 'folder', item.folder.id)"
+          @dragstart="!item.folder.system && startDrag($event, 'folder', item.folder.id)"
           @dragend="endDrag"
           @dragover.prevent="setDropTarget(item.folder.id)"
           @dragleave="clearDropTarget(item.folder.id)"
@@ -169,7 +172,7 @@ onMounted(() => void manager.load())
             <span class="shrink-0">📁</span
             ><span class="truncate">{{ item.folder.name }}</span>
           </button>
-          <DropdownMenu>
+          <DropdownMenu v-if="!item.folder.system">
             <DropdownMenuTrigger as-child
               ><button
                 type="button"
@@ -200,6 +203,7 @@ onMounted(() => void manager.load())
           {{ currentFolder?.name || 'Корень' }}
         </h2>
         <AssetUploadDropzone
+          v-if="!currentFolder?.system"
           :busy="busy"
           @files="manager.upload($event, currentFolderID)"
         />
@@ -216,10 +220,10 @@ onMounted(() => void manager.load())
             v-for="folder in visibleFolders"
             :key="folder.id"
             type="button"
-            draggable="true"
+            :draggable="!folder.system"
             class="flex min-h-36 cursor-pointer flex-col items-start justify-center rounded-xl border border-slate-200 bg-white p-4 text-left transition hover:border-violet-300 hover:bg-violet-50/50"
             @click="selectFolder(folder.id)"
-            @dragstart="startDrag($event, 'folder', folder.id)"
+            @dragstart="!folder.system && startDrag($event, 'folder', folder.id)"
             @dragend="endDrag"
           >
             <Folder class="size-8 text-violet-600" />
