@@ -475,20 +475,24 @@ func clipWindow(r *http.Request) (time.Time, time.Time, error) {
 }
 
 func parseClipWindow(startedRaw, endedRaw string) (time.Time, time.Time, error) {
-	const dateLayout = "2006-01-02"
 	now := time.Now().UTC()
 	if startedRaw == "" || endedRaw == "" {
 		return time.Time{}, time.Time{}, errText("startedAt and endedAt are required together")
 	}
-	startedAt, err := time.Parse(dateLayout, startedRaw)
+	startedAt, startedAsDate, err := parseClipBoundary(startedRaw)
 	if err != nil {
-		return time.Time{}, time.Time{}, errText("startedAt must use YYYY-MM-DD")
+		return time.Time{}, time.Time{}, errText("startedAt must use YYYY-MM-DD or RFC3339")
 	}
-	endedDate, err := time.Parse(dateLayout, endedRaw)
+	endedAt, endedAsDate, err := parseClipBoundary(endedRaw)
 	if err != nil {
-		return time.Time{}, time.Time{}, errText("endedAt must use YYYY-MM-DD")
+		return time.Time{}, time.Time{}, errText("endedAt must use YYYY-MM-DD or RFC3339")
 	}
-	endedAt := endedDate.AddDate(0, 0, 1)
+	if startedAsDate != endedAsDate {
+		return time.Time{}, time.Time{}, errText("startedAt and endedAt must use the same format")
+	}
+	if endedAsDate {
+		endedAt = endedAt.AddDate(0, 0, 1)
+	}
 	if endedAt.After(now) {
 		endedAt = now
 	}
@@ -496,6 +500,14 @@ func parseClipWindow(startedRaw, endedRaw string) (time.Time, time.Time, error) 
 		return time.Time{}, time.Time{}, errText("startedAt must be before endedAt")
 	}
 	return startedAt, endedAt, nil
+}
+
+func parseClipBoundary(raw string) (time.Time, bool, error) {
+	if value, err := time.Parse("2006-01-02", raw); err == nil {
+		return value, true, nil
+	}
+	value, err := time.Parse(time.RFC3339, raw)
+	return value, false, err
 }
 
 type importInput struct {
