@@ -10,6 +10,7 @@ import (
 	"github.com/finde-clip/finde-v2/back/internal/media"
 	"github.com/finde-clip/finde-v2/back/internal/processing"
 	"github.com/finde-clip/finde-v2/back/internal/realtime"
+	"github.com/finde-clip/finde-v2/back/internal/renderassets"
 	"github.com/finde-clip/finde-v2/back/internal/sourcevideo"
 	"github.com/finde-clip/finde-v2/back/internal/streamer"
 	"github.com/finde-clip/finde-v2/back/internal/subscription"
@@ -50,6 +51,7 @@ func New(s *streamer.Service, c *clip.Service, subs *subscription.Service, asset
 func (a *API) Router() http.Handler {
 	r := chi.NewRouter()
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) { write(w, 200, map[string]bool{"ok": true}) })
+	r.Get("/api/render-assets/text-font", a.renderTextFont)
 	r.Get("/api/events", a.pipelineEvents)
 	r.Route("/api/settings/whisper", func(r chi.Router) {
 		r.Get("/", a.listWhisperModels)
@@ -132,6 +134,13 @@ func (a *API) Router() http.Handler {
 	r.Post("/api/videos/{id}/instagram/{containerID}/publish", a.publishInstagramContainer)
 	r.Delete("/api/videos/{id}", a.deleteVideo)
 	return r
+}
+
+func (a *API) renderTextFont(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "font/ttf")
+	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	w.Header().Set("Content-Length", strconv.Itoa(len(renderassets.TextFont)))
+	_, _ = w.Write(renderassets.TextFont)
 }
 
 func (a *API) listSourceVideos(w http.ResponseWriter, r *http.Request) {

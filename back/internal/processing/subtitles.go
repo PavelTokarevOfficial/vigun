@@ -107,10 +107,20 @@ func writePositionedASS(source, destination string, layer composition.Layer, can
 	}
 	width := max(1, canvas.Width)
 	height := max(1, canvas.Height)
-	centerX := min(width, max(0, layer.X+layer.Width/2))
+	anchorX := layer.X + layer.Width/2
+	anchor := 8
+	switch layer.Style.TextAlign {
+	case "left":
+		anchorX = layer.X
+		anchor = 7
+	case "right":
+		anchorX = layer.X + layer.Width
+		anchor = 9
+	}
+	anchorX = min(width, max(0, anchorX))
 	topY := min(height, max(0, layer.Y))
 	const assWidth, assHeight = 384, 288
-	position := fmt.Sprintf(`{\an8\pos(%d,%d)}`, scaleCoordinate(centerX, width, assWidth), scaleCoordinate(topY, height, assHeight))
+	position := fmt.Sprintf(`{\an%d\pos(%d,%d)}`, anchor, scaleCoordinate(anchorX, width, assWidth), scaleCoordinate(topY, height, assHeight))
 	blocks := strings.Split(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\n\n")
 	events := make([]string, 0, len(blocks))
 	for _, block := range blocks {

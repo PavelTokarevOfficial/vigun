@@ -76,6 +76,7 @@ type Filters struct {
 
 type Style struct {
 	FontSize     int    `json:"fontSize,omitempty"`
+	TextAlign    string `json:"textAlign,omitempty"`
 	Alignment    int    `json:"alignment,omitempty"`
 	MarginV      int    `json:"marginV,omitempty"`
 	Outline      int    `json:"outline,omitempty"`
@@ -249,6 +250,9 @@ func (c Config) Validate() error {
 		if layer.Type == "text" && layer.TextSource != "" && layer.TextSource != "custom" && layer.TextSource != "streamer_name" {
 			return fmt.Errorf("text layer %q has unsupported text source %q", layer.ID, layer.TextSource)
 		}
+		if (layer.Type == "text" || layer.Type == "subtitles") && layer.Style.TextAlign != "" && layer.Style.TextAlign != "left" && layer.Style.TextAlign != "center" && layer.Style.TextAlign != "right" {
+			return fmt.Errorf("text layer %q has unsupported alignment %q", layer.ID, layer.Style.TextAlign)
+		}
 		if layer.Type == "color" && strings.TrimSpace(layer.Color) == "" {
 			return fmt.Errorf("color layer %q requires color", layer.ID)
 		}
@@ -276,7 +280,7 @@ func Default(width, height, blur int) Config {
 			{ID: "background", Name: "Видео на фоне", Type: "video", Source: "clip", Width: width, Height: height, Visible: true, Opacity: 1, Fit: "cover"},
 			{ID: "background-blur", Name: "Блюр фона", Type: "blur", Width: width, Height: height, Visible: true, Opacity: 1, Filters: Filters{Blur: blur, Brightness: -0.2}},
 			{ID: "clip", Name: "Видео", Type: "video", Source: "clip", Width: width, Height: height, Visible: true, Opacity: 1, Fit: "contain"},
-			{ID: "subtitles", Name: "Субтитры", Type: "subtitles", X: 90, Y: height - 380, Width: width - 180, Height: 240, Visible: true, Opacity: 1, Style: Style{FontSize: 8, Alignment: 2, MarginV: 100, Outline: 2, PrimaryColor: "&H00FFFFFF", OutlineColor: "&H00000000"}},
+			{ID: "subtitles", Name: "Субтитры", Type: "subtitles", X: 90, Y: height - 380, Width: width - 180, Height: 240, Visible: true, Opacity: 1, Style: Style{FontSize: 8, TextAlign: "center", Alignment: 2, MarginV: 100, Outline: 2, PrimaryColor: "&H00FFFFFF", OutlineColor: "&H00000000"}},
 		},
 	}
 }

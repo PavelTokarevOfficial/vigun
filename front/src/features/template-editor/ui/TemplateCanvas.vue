@@ -8,6 +8,7 @@ import {
   shallowRef,
   watch,
 } from 'vue'
+import twitchIconURL from '@/assets/twitch-icon.svg'
 import type { Asset } from '@/entities/asset/model/types'
 import type { Layer, TemplateConfig } from '@/entities/template/model/types'
 
@@ -37,6 +38,7 @@ const emit = defineEmits<{
 }>()
 
 const scale = 0.3
+const renderTextFontFamily = 'FindeRenderText'
 const stageRef = ref()
 const transformerRef = ref()
 const media = shallowRef<Record<string, HTMLImageElement | HTMLVideoElement>>(
@@ -44,7 +46,28 @@ const media = shallowRef<Record<string, HTMLImageElement | HTMLVideoElement>>(
 )
 const previewMuted = ref(true)
 const previewVolume = ref(1)
+const twitchIconImage = shallowRef<HTMLImageElement | null>(null)
 let animationFrame = 0
+
+if (typeof window !== 'undefined') {
+  const icon = new window.Image()
+  icon.addEventListener('load', () => {
+    twitchIconImage.value = icon
+  })
+  icon.src = twitchIconURL
+
+  const textFont = new FontFace(
+    renderTextFontFamily,
+    'url(/api/render-assets/text-font) format("truetype")',
+  )
+  void textFont
+    .load()
+    .then((loadedFont) => {
+      document.fonts.add(loadedFont)
+      stageRef.value?.getNode?.()?.batchDraw()
+    })
+    .catch(() => undefined)
+}
 
 const assetByID = computed(
   () => new Map(props.assets.map((asset) => [asset.id, asset])),
@@ -303,9 +326,116 @@ function label(layer: Layer) {
   return layer.name
 }
 
+function textLayout(layer: Layer) {
+  const width = Math.max(layer.width * scale, 1)
+  const height = Math.max(layer.height * scale, 1)
+  const fontSize = Math.max(1, layer.style?.fontSize ?? 64) * scale
+  const align = layer.style?.textAlign ?? 'center'
+  const hasTwitchIcon = layer.textSource === 'streamer_name'
+  if (!hasTwitchIcon) {
+    return {
+      textX: 0,
+      textWidth: width,
+      iconX: 0,
+      iconY: 0,
+      iconSize: 0,
+      fontSize,
+      height,
+      align,
+    }
+  }
+  const iconSize = fontSize
+  const gap = Math.max(4 * scale, fontSize * 0.2)
+  const longestLine = Math.max(
+    1,
+    ...label(layer)
+      .split('\n')
+      .map((line) => Array.from(line).length),
+  )
+  const textWidth = Math.min(
+    Math.max(fontSize, longestLine * fontSize * 0.58),
+    Math.max(1, width - iconSize - gap),
+  )
+  const groupWidth = iconSize + gap + textWidth
+  const groupX =
+    align === 'left'
+      ? 0
+      : align === 'right'
+        ? Math.max(0, width - groupWidth)
+        : Math.max(0, (width - groupWidth) / 2)
+  return {
+    textX: groupX + iconSize + gap,
+    textWidth,
+    iconX: groupX,
+    iconY: Math.max(0, (height - iconSize) / 2),
+    iconSize,
+    fontSize,
+    height,
+    align: 'left' as const,
+  }
+}
+
+function textConfig(layer: Layer) {
+  const layout = textLayout(layer)
+  return {
+    text: label(layer),
+    width: layout.textWidth,
+    height: layout.height,
+    x: layout.textX,
+    y: 0,
+    fontFamily: renderTextFontFamily,
+    fontSize: layout.fontSize,
+    fill: layer.style?.primaryColor || '#ffffff',
+    stroke: layer.style?.outlineColor || '#000000',
+    strokeWidth: Math.max(0, layer.style?.outline ?? 2) * scale * 2,
+    align: layout.align,
+    verticalAlign: 'middle',
+    wrap: 'none',
+  }
+}
+
+function twitchIconConfig(layer: Layer) {
+  const layout = textLayout(layer)
+  return {
+    image: twitchIconImage.value ?? undefined,
+    x: layout.iconX,
+    y: layout.iconY,
+    width: layout.iconSize,
+    height: layout.iconSize,
+  }
+}
+
+function subtitleColor(value: string | undefined, fallback: string) {
+  if (!value) return fallback
+  if (/^#[0-9a-f]{6}$/i.test(value)) return value
+  const match = value.match(
+    /^&H[0-9a-f]{2}([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i,
+  )
+  return match ? `#${match[3]}${match[2]}${match[1]}` : fallback
+}
+
+function subtitleConfig(layer: Layer) {
+  const assScale = props.config.canvas.height / 288
+  return {
+    text: label(layer),
+    width: Math.max(layer.width * scale, 1),
+    height: Math.max(layer.height * scale, 1),
+    x: 0,
+    y: 0,
+    fontFamily: renderTextFontFamily,
+    fontSize: Math.max(1, layer.style?.fontSize ?? 8) * assScale * scale,
+    fill: subtitleColor(layer.style?.primaryColor, '#ffffff'),
+    stroke: subtitleColor(layer.style?.outlineColor, '#000000'),
+    strokeWidth: Math.max(0, layer.style?.outline ?? 2) * assScale * scale * 2,
+    align: layer.style?.textAlign ?? 'center',
+    verticalAlign: 'top',
+    wrap: 'word',
+  }
+}
+
 function placeholderColor(layer: Layer) {
-  if (layer.type === 'subtitles') return '#18181b'
-  if (layer.type === 'text') return '#312e81'
+  if (layer.type === 'subtitles') return 'transparent'
+  if (layer.type === 'text') return 'transparent'
   if (layer.type === 'blur') {
     const darkness = Math.abs(layer.filters?.brightness ?? -0.2)
     return `rgba(15, 23, 42, ${Math.min(0.85, 0.12 + darkness * 0.7)})`
@@ -465,8 +595,20 @@ onBeforeUnmount(() => {
                 }"
               />
               <v-image v-if="media[layer.id]" :config="mediaConfig(layer)" />
+              <v-image
+                v-if="layer.type === 'text' && layer.textSource === 'streamer_name' && twitchIconImage"
+                :config="twitchIconConfig(layer)"
+              />
               <v-text
-                v-if="!media[layer.id] || layer.type === 'text' || layer.type === 'subtitles' || layer.type === 'blur'"
+                v-if="layer.type === 'text'"
+                :config="textConfig(layer)"
+              />
+              <v-text
+                v-else-if="layer.type === 'subtitles'"
+                :config="subtitleConfig(layer)"
+              />
+              <v-text
+                v-else-if="!media[layer.id] || layer.type === 'blur'"
                 :config="{
                   text: label(layer),
                   width: Math.max(layer.width * scale - 12, 1),
@@ -476,7 +618,7 @@ onBeforeUnmount(() => {
                   fontSize: Math.min(18, Math.max(10, layer.width * scale * 0.07)),
                   fill: layer.type === 'video' || layer.type === 'image' ? '#475569' : '#fff',
                   align: 'center',
-                  verticalAlign: layer.type === 'subtitles' ? 'top' : 'middle',
+                  verticalAlign: 'middle',
                   wrap: 'word',
                 }"
               />

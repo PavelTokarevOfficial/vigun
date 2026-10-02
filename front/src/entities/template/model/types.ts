@@ -34,6 +34,7 @@ export type Layer = {
   filters?: { blur?: number; brightness?: number }
   style?: {
     fontSize?: number
+    textAlign?: 'left' | 'center' | 'right'
     alignment?: number
     marginV?: number
     outline?: number
@@ -128,6 +129,7 @@ export function createDefaultConfig(): TemplateConfig {
         opacity: 1,
         style: {
           fontSize: 8,
+          textAlign: 'center',
           alignment: 2,
           marginV: 100,
           outline: 2,
@@ -179,6 +181,36 @@ export function normalizeConfig(config: TemplateConfig): TemplateConfig {
         return [{ ...layer, type: 'video', source: 'asset' }]
       }
       if (layer.type === 'gif') return [{ ...layer, type: 'image' }]
+      if (layer.type === 'text') {
+        return [
+          {
+            ...layer,
+            style: {
+              fontSize: 64,
+              textAlign: 'center',
+              outline: 2,
+              primaryColor: '#ffffff',
+              outlineColor: '#000000',
+              ...layer.style,
+            },
+          },
+        ]
+      }
+      if (layer.type === 'subtitles') {
+        return [
+          {
+            ...layer,
+            style: {
+              fontSize: 8,
+              textAlign: 'center',
+              outline: 2,
+              primaryColor: '&H00FFFFFF',
+              outlineColor: '&H00000000',
+              ...layer.style,
+            },
+          },
+        ]
+      }
       return [layer]
     }),
   }
