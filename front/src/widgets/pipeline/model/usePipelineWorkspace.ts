@@ -59,6 +59,7 @@ export function usePipelineWorkspace() {
   const templatesLoading = ref(false)
   const processStage = ref<'choose' | 'edit'>('choose')
   const selectedTemplate = ref<VideoTemplate | null>(null)
+  const savingTemplate = ref(false)
   const whisperModels = ref<{ id: string; name: string; type: string }[]>([])
   const defaultWhisperModelId = ref('')
   const assets = ref<Asset[]>([])
@@ -266,6 +267,7 @@ export function usePipelineWorkspace() {
       timeline: { segments },
       layers: [...renderEditor.draft.value.layers, ...transitionLayers],
     })
+    renderEditor.markSaved()
     timelineTime.value = 0
     selectedTimelineSegmentID.value = null
     processStage.value = 'edit'
@@ -389,6 +391,63 @@ export function usePipelineWorkspace() {
       selectedTrainClipIDs.value = new Set()
       trainSelectionMode.value = false
       closeProcessDialog()
+    }
+  }
+
+  async function saveSelectedTemplate() {
+    const template = selectedTemplate.value
+    if (!template || savingTemplate.value || !renderEditor.isDirty.value) return
+    const missingAsset = renderEditor.draft.value.layers.find(
+      (layer) =>
+        !layer.timelineSegmentId &&
+        (layer.type === 'image' ||
+          layer.type === 'gif' ||
+          layer.type === 'asset_video' ||
+          (layer.type === 'video' && layer.source === 'asset') ||
+          layer.type === 'audio') &&
+        !layer.assetId,
+    )
+    if (missingAsset) {
+      toast.error(`Для слоя «${missingAsset.name}» выберите ассет.`)
+      return
+    }
+
+    savingTemplate.value = true
+    try {
+      const config: TemplateConfig = {
+        ...renderEditor.draft.value,
+        layers: renderEditor.draft.value.layers.filter(
+          (layer) => !layer.timelineSegmentId,
+        ),
+        timeline: template.config.timeline,
+      }
+      const response = await fetch(`/api/templates/${template.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: template.name,
+          description: template.description,
+          previewAssetId: template.previewAssetId,
+          config,
+        }),
+      })
+      if (!response.ok) {
+        throw new Error(
+          await readError(response, 'Не удалось сохранить шаблон'),
+        )
+      }
+      const saved = await readData<VideoTemplate>(response)
+      const index = templates.value.findIndex((item) => item.id === saved.id)
+      if (index >= 0) templates.value[index] = saved
+      selectedTemplate.value = saved
+      renderEditor.markSaved()
+      toast.success(`Шаблон «${saved.name}» сохранён`)
+    } catch (cause) {
+      toast.error(
+        cause instanceof Error ? cause.message : 'Не удалось сохранить шаблон',
+      )
+    } finally {
+      savingTemplate.value = false
     }
   }
 
@@ -820,11 +879,13 @@ export function usePipelineWorkspace() {
     renderEditor,
     saveFragmentEdit,
     selectedTemplate,
+    savingTemplate,
     whisperModels,
     defaultWhisperModelId,
     selectedTimelineSegmentID,
     selectedTrainClipIDs,
     sendToRender,
+    saveSelectedTemplate,
     sourceURL,
     sourceURLs,
     startFragmentPreview,
