@@ -84,7 +84,7 @@ func TestLayerSubtitleFilesClipsCuesToLayerRange(t *testing.T) {
 			t.Fatalf("layer SRT does not contain %q:\n%s", expected, got)
 		}
 	}
-	if !strings.Contains(got, `{\an8\pos(192,30)}First`) {
+	if !strings.Contains(got, `{\an8\pos(540,200)}First`) {
 		t.Fatalf("layer ASS does not contain editor position:\n%s", got)
 	}
 }
@@ -120,9 +120,9 @@ func TestWritePositionedASSUsesSubtitleTextAlignment(t *testing.T) {
 		align string
 		want  string
 	}{
-		{name: "left", align: "left", want: `\an7\pos(32,30)`},
-		{name: "center", align: "center", want: `\an8\pos(192,30)`},
-		{name: "right", align: "right", want: `\an9\pos(352,30)`},
+		{name: "left", align: "left", want: `\an7\pos(90,200)`},
+		{name: "center", align: "center", want: `\an8\pos(540,200)`},
+		{name: "right", align: "right", want: `\an9\pos(990,200)`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			destination := filepath.Join(dir, test.name+".ass")

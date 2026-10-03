@@ -280,7 +280,7 @@ func Default(width, height, blur int) Config {
 			{ID: "background", Name: "Видео на фоне", Type: "video", Source: "clip", Width: width, Height: height, Visible: true, Opacity: 1, Fit: "cover"},
 			{ID: "background-blur", Name: "Блюр фона", Type: "blur", Width: width, Height: height, Visible: true, Opacity: 1, Filters: Filters{Blur: blur, Brightness: -0.2}},
 			{ID: "clip", Name: "Видео", Type: "video", Source: "clip", Width: width, Height: height, Visible: true, Opacity: 1, Fit: "contain"},
-			{ID: "subtitles", Name: "Субтитры", Type: "subtitles", X: 90, Y: height - 380, Width: width - 180, Height: 240, Visible: true, Opacity: 1, Style: Style{FontSize: 8, TextAlign: "center", Alignment: 2, MarginV: 100, Outline: 2, PrimaryColor: "&H00FFFFFF", OutlineColor: "&H00000000"}},
+			{ID: "subtitles", Name: "Субтитры", Type: "subtitles", X: 90, Y: height - 380, Width: width - 180, Height: 240, Visible: true, Opacity: 1, Style: Style{FontSize: 53, TextAlign: "center", Outline: 2, PrimaryColor: "&H00FFFFFF", OutlineColor: "&H00000000"}},
 		},
 	}
 }

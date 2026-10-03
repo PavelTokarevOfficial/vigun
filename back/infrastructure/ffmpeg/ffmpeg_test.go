@@ -405,6 +405,15 @@ func TestBuildFilterAlignsTextInsideLayerBounds(t *testing.T) {
 	}
 }
 
+func TestSubtitleFontSizeMigratesLegacyASSUnits(t *testing.T) {
+	if got := subtitleFontSize(8, 1920); got != 53 {
+		t.Fatalf("legacy subtitle size = %d, want 53", got)
+	}
+	if got := subtitleFontSize(48, 1920); got != 48 {
+		t.Fatalf("pixel subtitle size = %d, want 48", got)
+	}
+}
+
 func TestRenderTextLayerWithTwitchIcon(t *testing.T) {
 	bin, err := exec.LookPath("ffmpeg")
 	if err != nil {

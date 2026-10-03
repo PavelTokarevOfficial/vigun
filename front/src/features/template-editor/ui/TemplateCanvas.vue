@@ -415,7 +415,6 @@ function subtitleColor(value: string | undefined, fallback: string) {
 }
 
 function subtitleConfig(layer: Layer) {
-  const assScale = props.config.canvas.height / 288
   return {
     text: label(layer),
     width: Math.max(layer.width * scale, 1),
@@ -423,10 +422,10 @@ function subtitleConfig(layer: Layer) {
     x: 0,
     y: 0,
     fontFamily: renderTextFontFamily,
-    fontSize: Math.max(1, layer.style?.fontSize ?? 8) * assScale * scale,
+    fontSize: Math.max(1, layer.style?.fontSize ?? 53) * scale,
     fill: subtitleColor(layer.style?.primaryColor, '#ffffff'),
     stroke: subtitleColor(layer.style?.outlineColor, '#000000'),
-    strokeWidth: Math.max(0, layer.style?.outline ?? 2) * assScale * scale * 2,
+    strokeWidth: Math.max(0, layer.style?.outline ?? 2) * scale * 2,
     align: layer.style?.textAlign ?? 'center',
     verticalAlign: 'top',
     wrap: 'word',

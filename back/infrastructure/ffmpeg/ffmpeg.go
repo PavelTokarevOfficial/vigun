@@ -281,7 +281,7 @@ func buildFilter(config composition.Config, subtitlePath string, subtitlePaths m
 				layerSubtitlePath = path
 			}
 			style := layer.Style
-			fontSize := positiveOr(style.FontSize, 8)
+			fontSize := subtitleFontSize(style.FontSize, config.Canvas.Height)
 			outline := nonNegativeOr(style.Outline, 2)
 			primary := safeASSColor(style.PrimaryColor, "&H00FFFFFF")
 			outlineColor := safeASSColor(style.OutlineColor, "&H00000000")
@@ -637,6 +637,18 @@ func positiveOr(value, fallback int) int {
 		return value
 	}
 	return fallback
+}
+func subtitleFontSize(value, canvasHeight int) int {
+	if canvasHeight <= 0 {
+		canvasHeight = 1920
+	}
+	if value <= 0 {
+		value = 8
+	}
+	if value <= 16 {
+		return max(1, (value*canvasHeight+144)/288)
+	}
+	return value
 }
 func nonNegativeOr(value, fallback int) int {
 	if value >= 0 {

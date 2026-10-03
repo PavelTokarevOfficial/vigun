@@ -128,10 +128,8 @@ export function createDefaultConfig(): TemplateConfig {
         visible: true,
         opacity: 1,
         style: {
-          fontSize: 8,
+          fontSize: 53,
           textAlign: 'center',
-          alignment: 2,
-          marginV: 100,
           outline: 2,
           primaryColor: '&H00FFFFFF',
           outlineColor: '&H00000000',
@@ -197,16 +195,26 @@ export function normalizeConfig(config: TemplateConfig): TemplateConfig {
         ]
       }
       if (layer.type === 'subtitles') {
+        const {
+          alignment: _alignment,
+          marginV: _marginV,
+          ...storedStyle
+        } = layer.style ?? {}
+        const storedFontSize = layer.style?.fontSize ?? 8
+        const fontSize =
+          layer.style?.alignment !== undefined && storedFontSize <= 16
+            ? Math.round((storedFontSize * config.canvas.height) / 288)
+            : storedFontSize
         return [
           {
             ...layer,
             style: {
-              fontSize: 8,
               textAlign: 'center',
               outline: 2,
               primaryColor: '&H00FFFFFF',
               outlineColor: '&H00000000',
-              ...layer.style,
+              ...storedStyle,
+              fontSize,
             },
           },
         ]

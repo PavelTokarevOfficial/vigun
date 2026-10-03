@@ -80,10 +80,8 @@ export function useTemplateEditor(initial: TemplateConfig) {
       ...(type === 'subtitles'
         ? {
             style: {
-              fontSize: 8,
+              fontSize: 53,
               textAlign: 'center' as const,
-              alignment: 2,
-              marginV: 100,
               outline: 2,
               primaryColor: '&H00FFFFFF',
               outlineColor: '&H00000000',

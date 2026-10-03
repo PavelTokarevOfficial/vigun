@@ -359,7 +359,7 @@ function setVideoSource(source: 'clip' | 'asset') {
             class="mt-1 w-full"
             type="number"
             min="1"
-            :value="layer.style?.fontSize || 8"
+            :value="layer.style?.fontSize || 53"
             @change="emit('update', { style: { ...layer.style, fontSize: numberValue($event) } })"
           ></label
         >
