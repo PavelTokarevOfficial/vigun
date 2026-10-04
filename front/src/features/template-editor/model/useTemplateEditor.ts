@@ -64,14 +64,24 @@ export function useTemplateEditor(initial: TemplateConfig) {
       ...(type === 'video' ? { source: 'clip' as const } : {}),
       ...(type === 'text' ? { text: 'Новый текст' } : {}),
       ...(type === 'text' ? { textSource: 'custom' as const } : {}),
+      ...(type === 'text'
+        ? {
+            style: {
+              fontSize: 64,
+              textAlign: 'center' as const,
+              outline: 2,
+              primaryColor: '#ffffff',
+              outlineColor: '#000000',
+            },
+          }
+        : {}),
       ...(type === 'blur' ? { filters: { blur: 18, brightness: -0.2 } } : {}),
       ...(type === 'color' ? { color: '#111827' } : {}),
       ...(type === 'subtitles'
         ? {
             style: {
-              fontSize: 8,
-              alignment: 2,
-              marginV: 100,
+              fontSize: 53,
+              textAlign: 'center' as const,
               outline: 2,
               primaryColor: '&H00FFFFFF',
               outlineColor: '&H00000000',

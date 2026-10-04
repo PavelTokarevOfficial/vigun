@@ -22,6 +22,7 @@ type Folder struct {
 	Name      string    `json:"name"`
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
+	System    bool      `json:"system"`
 }
 
 type Asset struct {
@@ -47,7 +48,7 @@ type Service struct {
 func New(db *pgxpool.Pool, storage media.Storage) *Service { return &Service{db: db, storage: storage} }
 
 func (s *Service) List(ctx context.Context) ([]Folder, []Asset, error) {
-	folderRows, err := s.db.Query(ctx, `SELECT id,parent_id,name,created_at,updated_at FROM asset_folders ORDER BY name`)
+	folderRows, err := s.db.Query(ctx, `SELECT id,parent_id,name,created_at,updated_at,system FROM asset_folders WHERE system=false ORDER BY name`)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -55,7 +56,7 @@ func (s *Service) List(ctx context.Context) ([]Folder, []Asset, error) {
 	folders := []Folder{}
 	for folderRows.Next() {
 		var item Folder
-		if err = folderRows.Scan(&item.ID, &item.ParentID, &item.Name, &item.CreatedAt, &item.UpdatedAt); err != nil {
+		if err = folderRows.Scan(&item.ID, &item.ParentID, &item.Name, &item.CreatedAt, &item.UpdatedAt, &item.System); err != nil {
 			return nil, nil, err
 		}
 		folders = append(folders, item)
@@ -91,14 +92,31 @@ func (s *Service) ListAll(ctx context.Context) ([]Folder, []Asset, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	folderRows, err := s.db.Query(ctx, `SELECT id,parent_id,name,created_at,updated_at,system FROM asset_folders WHERE system=true ORDER BY name`)
+	if err != nil {
+		return nil, nil, err
+	}
+	for folderRows.Next() {
+		var item Folder
+		if err = folderRows.Scan(&item.ID, &item.ParentID, &item.Name, &item.CreatedAt, &item.UpdatedAt, &item.System); err != nil {
+			folderRows.Close()
+			return nil, nil, err
+		}
+		folders = append(folders, item)
+	}
+	if err = folderRows.Err(); err != nil {
+		folderRows.Close()
+		return nil, nil, err
+	}
+	folderRows.Close()
 	rows, err := s.db.Query(ctx, `
-		SELECT 'media:' || m.id::text,NULL,
+		SELECT 'media:' || m.id::text,m.folder_id,
 			COALESCE(NULLIF(c.title,''),m.storage_key) || ' · ' || m.type::text,
 			m.mime_type,m.size,m.storage_key,m.created_at,m.created_at,m.type::text
 		FROM media_files m
 		LEFT JOIN clips c ON c.id=m.clip_id
 		UNION ALL
-		SELECT 'source-video:' || v.id::text,NULL,v.name,v.mime_type,v.size,v.storage_key,v.created_at,v.updated_at,'source_video'
+		SELECT 'source-video:' || v.id::text,v.folder_id,v.name,v.mime_type,v.size,v.storage_key,v.created_at,v.updated_at,'source_video'
 		FROM source_videos v
 		ORDER BY 7 DESC`)
 	if err != nil {
@@ -110,7 +128,7 @@ func (s *Service) ListAll(ctx context.Context) ([]Folder, []Asset, error) {
 		if err = rows.Scan(&item.ID, &item.FolderID, &item.Name, &item.MIMEType, &item.Size, &item.StorageKey, &item.CreatedAt, &item.UpdatedAt, &item.Origin); err != nil {
 			return nil, nil, err
 		}
-		item.Kind = displayKind(item.MIMEType)
+		item.Kind = systemDisplayKind(item.Origin, item.MIMEType)
 		item.URL, err = s.storage.PresignGet(ctx, item.StorageKey, 15*time.Minute)
 		if err != nil {
 			return nil, nil, err
@@ -118,6 +136,19 @@ func (s *Service) ListAll(ctx context.Context) ([]Folder, []Asset, error) {
 		items = append(items, item)
 	}
 	return folders, items, rows.Err()
+}
+
+func systemDisplayKind(origin, mime string) string {
+	switch origin {
+	case "source", "render", "source_video":
+		return "video"
+	case "audio":
+		return "audio"
+	case "subtitle":
+		return "file"
+	default:
+		return displayKind(mime)
+	}
 }
 
 func (s *Service) Open(ctx context.Context, id string) (media.Object, error) {
@@ -157,7 +188,7 @@ func (s *Service) CreateFolder(ctx context.Context, name string, parentID *strin
 		return Folder{}, err
 	}
 	var item Folder
-	err := s.db.QueryRow(ctx, `INSERT INTO asset_folders(parent_id,name) VALUES($1,$2) RETURNING id,parent_id,name,created_at,updated_at`, parentID, name).Scan(&item.ID, &item.ParentID, &item.Name, &item.CreatedAt, &item.UpdatedAt)
+	err := s.db.QueryRow(ctx, `INSERT INTO asset_folders(parent_id,name) VALUES($1,$2) RETURNING id,parent_id,name,created_at,updated_at,system`, parentID, name).Scan(&item.ID, &item.ParentID, &item.Name, &item.CreatedAt, &item.UpdatedAt, &item.System)
 	if err != nil {
 		return Folder{}, friendlyUnique(err, "a folder with this name already exists")
 	}
@@ -186,7 +217,7 @@ func (s *Service) UpdateFolder(ctx context.Context, id, name string, parentID *s
 	if exists {
 		return fmt.Errorf("a folder cannot be moved into its descendant")
 	}
-	cmd, err := s.db.Exec(ctx, `UPDATE asset_folders SET name=$2,parent_id=$3,updated_at=now() WHERE id=$1`, id, name, parentID)
+	cmd, err := s.db.Exec(ctx, `UPDATE asset_folders SET name=$2,parent_id=$3,updated_at=now() WHERE id=$1 AND system=false`, id, name, parentID)
 	if err != nil {
 		return friendlyUnique(err, "a folder with this name already exists")
 	}
@@ -204,7 +235,7 @@ func (s *Service) DeleteFolder(ctx context.Context, id string) error {
 	if hasChildren || hasAssets {
 		return fmt.Errorf("move or delete child folders and assets before deleting this folder")
 	}
-	cmd, err := s.db.Exec(ctx, `DELETE FROM asset_folders WHERE id=$1`, id)
+	cmd, err := s.db.Exec(ctx, `DELETE FROM asset_folders WHERE id=$1 AND system=false`, id)
 	if err != nil {
 		return err
 	}
@@ -295,7 +326,7 @@ func (s *Service) ensureFolder(ctx context.Context, id *string) error {
 		return nil
 	}
 	var exists bool
-	if err := s.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM asset_folders WHERE id=$1)`, *id).Scan(&exists); err != nil {
+	if err := s.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM asset_folders WHERE id=$1 AND system=false)`, *id).Scan(&exists); err != nil {
 		return err
 	}
 	if !exists {

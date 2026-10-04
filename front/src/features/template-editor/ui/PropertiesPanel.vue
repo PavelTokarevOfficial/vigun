@@ -51,6 +51,13 @@ const selectedAsset = computed(() =>
 function numberValue(event: Event) {
   return Number((event.target as HTMLInputElement).value)
 }
+function textColor(value: string | undefined, fallback: string) {
+  if (value?.startsWith('#') && value.length === 7) return value
+  const match = value?.match(
+    /^&H[0-9a-f]{2}([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i,
+  )
+  return match ? `#${match[3]}${match[2]}${match[1]}` : fallback
+}
 function setVideoSource(source: 'clip' | 'asset') {
   emit('update', {
     type: 'video',
@@ -158,6 +165,56 @@ function setVideoSource(source: 'clip' | 'asset') {
             :value="layer.text"
             @change="emit('update', { text: ($event.target as HTMLTextAreaElement).value })"
           /></label
+        >
+        <div class="block text-sm font-medium">
+          <span>Выравнивание</span>
+          <Select
+            :model-value="layer.style?.textAlign || 'center'"
+            @update:model-value="emit('update', { style: { ...layer.style, textAlign: String($event) as 'left' | 'center' | 'right' } })"
+          >
+            <SelectTrigger class="mt-1 w-full font-normal">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="left">По левому краю</SelectItem>
+              <SelectItem value="center">По центру</SelectItem>
+              <SelectItem value="right">По правому краю</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <label class="block text-sm"
+          >Размер шрифта<input
+            class="mt-1 w-full"
+            type="number"
+            min="1"
+            :value="layer.style?.fontSize || 64"
+            @change="emit('update', { style: { ...layer.style, fontSize: numberValue($event) } })"
+          ></label
+        >
+        <label class="flex items-center justify-between gap-3 text-sm"
+          ><span>Цвет текста</span>
+          <input
+            type="color"
+            :value="textColor(layer.style?.primaryColor, '#ffffff')"
+            @input="emit('update', { style: { ...layer.style, primaryColor: ($event.target as HTMLInputElement).value } })"
+          ></label
+        >
+        <label class="block text-sm"
+          >Толщина контура<input
+            class="mt-1 w-full"
+            type="number"
+            min="0"
+            :value="layer.style?.outline ?? 2"
+            @change="emit('update', { style: { ...layer.style, outline: numberValue($event) } })"
+          ></label
+        >
+        <label class="flex items-center justify-between gap-3 text-sm"
+          ><span>Цвет контура</span>
+          <input
+            type="color"
+            :value="textColor(layer.style?.outlineColor, '#000000')"
+            @input="emit('update', { style: { ...layer.style, outlineColor: ($event.target as HTMLInputElement).value } })"
+          ></label
         >
       </template>
 
@@ -281,22 +338,54 @@ function setVideoSource(source: 'clip' | 'asset') {
             Сначала скачайте модель в настройках Whisper.
           </span>
         </div>
+        <div class="block text-sm font-medium">
+          <span>Выравнивание</span>
+          <Select
+            :model-value="layer.style?.textAlign || 'center'"
+            @update:model-value="emit('update', { style: { ...layer.style, textAlign: String($event) as 'left' | 'center' | 'right' } })"
+          >
+            <SelectTrigger class="mt-1 w-full font-normal">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="left">По левому краю</SelectItem>
+              <SelectItem value="center">По центру</SelectItem>
+              <SelectItem value="right">По правому краю</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
         <label class="block text-sm"
           >Размер шрифта<input
             class="mt-1 w-full"
             type="number"
             min="1"
-            :value="layer.style?.fontSize || 8"
+            :value="layer.style?.fontSize || 53"
             @change="emit('update', { style: { ...layer.style, fontSize: numberValue($event) } })"
           ></label
         >
+        <label class="flex items-center justify-between gap-3 text-sm"
+          ><span>Цвет текста</span>
+          <input
+            type="color"
+            :value="textColor(layer.style?.primaryColor, '#ffffff')"
+            @input="emit('update', { style: { ...layer.style, primaryColor: ($event.target as HTMLInputElement).value } })"
+          ></label
+        >
         <label class="block text-sm"
-          >Контур<input
+          >Толщина контура<input
             class="mt-1 w-full"
             type="number"
             min="0"
             :value="layer.style?.outline ?? 2"
             @change="emit('update', { style: { ...layer.style, outline: numberValue($event) } })"
+          ></label
+        >
+        <label class="flex items-center justify-between gap-3 text-sm"
+          ><span>Цвет контура</span>
+          <input
+            type="color"
+            :value="textColor(layer.style?.outlineColor, '#000000')"
+            @input="emit('update', { style: { ...layer.style, outlineColor: ($event.target as HTMLInputElement).value } })"
           ></label
         >
       </template>

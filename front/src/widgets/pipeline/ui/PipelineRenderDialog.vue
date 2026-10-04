@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowLeft, Redo2, Undo2, X } from '@lucide/vue'
+import { ArrowLeft, Redo2, Save, Undo2, X } from '@lucide/vue'
 import LayerPanel from '@/features/template-editor/ui/LayerPanel.vue'
 import PropertiesPanel from '@/features/template-editor/ui/PropertiesPanel.vue'
 import TemplateCanvas from '@/features/template-editor/ui/TemplateCanvas.vue'
@@ -26,6 +26,8 @@ const {
   selectedTimelineSegmentID,
   selectEditorLayer,
   selectTimelineSegment,
+  saveSelectedTemplate,
+  savingTemplate,
   sendToRender,
   sourceURL,
   sourceURLs,
@@ -70,8 +72,8 @@ const {
               {{
                 processClipIDs.length > 1 ? `Паровозик из ${processClipIDs.length} фрагментов` : processClip?.title
               }}
-              · {{ selectedTemplate?.name }}. Изменения применятся только к
-              этому рендеру.
+              · {{ selectedTemplate?.name }}. Изменения применятся к текущему
+              рендеру; при необходимости их можно сохранить в шаблон.
             </template>
           </p>
         </div>
@@ -237,6 +239,14 @@ const {
             <AppButton variant="secondary" @click="closeProcessDialog"
               >Отмена</AppButton
             >
+            <AppButton
+              variant="secondary"
+              :disabled="savingTemplate || !renderEditor.isDirty.value"
+              @click="saveSelectedTemplate"
+            >
+              <Save class="mr-1 inline size-4" />
+              {{ savingTemplate ? 'Сохраняем…' : 'Сохранить шаблон' }}
+            </AppButton>
             <AppButton :disabled="busy === processClipID" @click="sendToRender">
               {{
                 busy === processClipID ? 'Отправляем…' : 'Отправить на рендер'

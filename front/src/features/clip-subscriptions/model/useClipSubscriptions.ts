@@ -5,6 +5,11 @@ import { readData, readError } from '@/shared/api/http'
 import type { DateRangeValue } from '@/shared/lib/dateRange'
 import type { SubscriptionSyncControls } from './syncControls'
 
+function localDateBoundary(value: string, nextDay = false) {
+  const [year, month, day] = value.split('-').map(Number)
+  return new Date(year, month - 1, day + (nextDay ? 1 : 0)).toISOString()
+}
+
 export function useClipSubscriptions(controls: SubscriptionSyncControls) {
   const feeds = ref<SubscriptionFeed[]>([])
   const loading = ref(true)
@@ -50,8 +55,8 @@ export function useClipSubscriptions(controls: SubscriptionSyncControls) {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
-                startedAt: range.start,
-                endedAt: range.end,
+                startedAt: localDateBoundary(range.start),
+                endedAt: localDateBoundary(range.end, true),
               }),
             },
           )

@@ -84,7 +84,7 @@ func TestLayerSubtitleFilesClipsCuesToLayerRange(t *testing.T) {
 			t.Fatalf("layer SRT does not contain %q:\n%s", expected, got)
 		}
 	}
-	if !strings.Contains(got, `{\an8\pos(192,30)}First`) {
+	if !strings.Contains(got, `{\an8\pos(540,200)}First`) {
 		t.Fatalf("layer ASS does not contain editor position:\n%s", got)
 	}
 }
@@ -105,5 +105,38 @@ func TestLayerSubtitleFilesMarksEmptyRangeWithoutFallingBack(t *testing.T) {
 	path, exists := paths["late-captions"]
 	if !exists || path != "" {
 		t.Fatalf("expected an explicit empty subtitle track, got exists=%v path=%q", exists, path)
+	}
+}
+
+func TestWritePositionedASSUsesSubtitleTextAlignment(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "subtitles.srt")
+	if err := os.WriteFile(source, []byte("1\n00:00:00,000 --> 00:00:01,000\nAligned\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	canvas := composition.Canvas{Width: 1080, Height: 1920}
+	for _, test := range []struct {
+		name  string
+		align string
+		want  string
+	}{
+		{name: "left", align: "left", want: `\an7\pos(90,200)`},
+		{name: "center", align: "center", want: `\an8\pos(540,200)`},
+		{name: "right", align: "right", want: `\an9\pos(990,200)`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			destination := filepath.Join(dir, test.name+".ass")
+			layer := composition.Layer{X: 90, Y: 200, Width: 900, Height: 240, Style: composition.Style{TextAlign: test.align}}
+			if err := writePositionedASS(source, destination, layer, canvas); err != nil {
+				t.Fatal(err)
+			}
+			raw, err := os.ReadFile(destination)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(raw), test.want) {
+				t.Fatalf("ASS does not contain %q:\n%s", test.want, raw)
+			}
+		})
 	}
 }

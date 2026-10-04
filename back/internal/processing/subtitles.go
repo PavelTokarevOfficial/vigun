@@ -107,10 +107,19 @@ func writePositionedASS(source, destination string, layer composition.Layer, can
 	}
 	width := max(1, canvas.Width)
 	height := max(1, canvas.Height)
-	centerX := min(width, max(0, layer.X+layer.Width/2))
+	anchorX := layer.X + layer.Width/2
+	anchor := 8
+	switch layer.Style.TextAlign {
+	case "left":
+		anchorX = layer.X
+		anchor = 7
+	case "right":
+		anchorX = layer.X + layer.Width
+		anchor = 9
+	}
+	anchorX = min(width, max(0, anchorX))
 	topY := min(height, max(0, layer.Y))
-	const assWidth, assHeight = 384, 288
-	position := fmt.Sprintf(`{\an8\pos(%d,%d)}`, scaleCoordinate(centerX, width, assWidth), scaleCoordinate(topY, height, assHeight))
+	position := fmt.Sprintf(`{\an%d\pos(%d,%d)}`, anchor, anchorX, topY)
 	blocks := strings.Split(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\n\n")
 	events := make([]string, 0, len(blocks))
 	for _, block := range blocks {
@@ -144,17 +153,13 @@ PlayResY: %d
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,Arial,8,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,0,2,0,0,0,1
+Style: Default,DejaVu Sans,53,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,0,2,0,0,0,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 %s
-`, assWidth, assHeight, strings.Join(events, "\n"))
+`, width, height, strings.Join(events, "\n"))
 	return os.WriteFile(destination, []byte(ass), 0o600)
-}
-
-func scaleCoordinate(value, sourceSize, targetSize int) int {
-	return (value*targetSize + sourceSize/2) / sourceSize
 }
 
 func formatASSTime(value time.Duration) string {

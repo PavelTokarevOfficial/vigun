@@ -3,15 +3,19 @@ package ffmpeg
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 
 	"github.com/finde-clip/finde-v2/back/internal/composition"
 	"github.com/finde-clip/finde-v2/back/internal/processing"
+	"github.com/finde-clip/finde-v2/back/internal/renderassets"
 )
 
 type Adapter struct{ Bin string }
+
+const twitchIconInputID = "__builtin_twitch_icon__"
 
 func New(bin string) *Adapter { return &Adapter{bin} }
 func (a *Adapter) run(ctx context.Context, args ...string) error {
@@ -86,10 +90,23 @@ func (a *Adapter) Render(ctx context.Context, in processing.RenderInput) error {
 	if err != nil {
 		return err
 	}
+	if usesTwitchIcon(config) {
+		iconPath := filepath.Join(filepath.Dir(in.OutputPath), "twitch-icon.png")
+		if err = os.WriteFile(iconPath, renderassets.TwitchIcon, 0o600); err != nil {
+			return fmt.Errorf("write Twitch icon: %w", err)
+		}
+		iconIndex := nextInputIndex(assetInputs)
+		args = append(args, "-loop", "1", "-i", iconPath)
+		assetInputs[twitchIconInputID] = iconIndex
+	}
+	fontPath := filepath.Join(filepath.Dir(in.OutputPath), "render-text.ttf")
+	if err = os.WriteFile(fontPath, renderassets.TextFont, 0o600); err != nil {
+		return fmt.Errorf("write render text font: %w", err)
+	}
 	if err := appendTimelineInputs(&args, config, in.SourcePath, in.AssetPaths, assetInputs, audioInputs); err != nil {
 		return err
 	}
-	filter, videoLabel, audioLabel, err := buildFilter(config, in.SubtitlePath, in.SubtitlePaths, assetInputs, audioInputs)
+	filter, videoLabel, audioLabel, err := buildFilter(config, in.SubtitlePath, in.SubtitlePaths, assetInputs, audioInputs, fontPath)
 	if err != nil {
 		return err
 	}
@@ -212,7 +229,7 @@ func appendAssetInputs(args *[]string, config composition.Config, paths map[stri
 	return indices, nil
 }
 
-func buildFilter(config composition.Config, subtitlePath string, subtitlePaths map[string]string, assetInputs map[string]int, audioInputs map[int]bool) (string, string, string, error) {
+func buildFilter(config composition.Config, subtitlePath string, subtitlePaths map[string]string, assetInputs map[string]int, audioInputs map[int]bool, fontPath string) (string, string, string, error) {
 	baseFilter := fmt.Sprintf("color=c=%s:s=%dx%d:r=%d", safeColor(config.Canvas.Background, "#000000"), config.Canvas.Width, config.Canvas.Height, config.Canvas.FPS)
 	if duration := timelineOutputDuration(config); duration > 0 {
 		baseFilter += fmt.Sprintf(":d=%g", duration)
@@ -264,15 +281,22 @@ func buildFilter(config composition.Config, subtitlePath string, subtitlePaths m
 				layerSubtitlePath = path
 			}
 			style := layer.Style
-			fontSize := positiveOr(style.FontSize, 8)
+			fontSize := subtitleFontSize(style.FontSize, config.Canvas.Height)
 			outline := nonNegativeOr(style.Outline, 2)
 			primary := safeASSColor(style.PrimaryColor, "&H00FFFFFF")
 			outlineColor := safeASSColor(style.OutlineColor, "&H00000000")
 			// This is the point where Whisper's local SRT is burned into the render.
-			filters = append(filters, fmt.Sprintf("[%s]subtitles=filename='%s':force_style='Fontsize=%d,PrimaryColour=%s,OutlineColour=%s,BorderStyle=1,Outline=%d'[%s]", base, escapeFilterPath(layerSubtitlePath), fontSize, primary, outlineColor, outline, next))
+			fontDirectory := filepath.Dir(fontPath)
+			filters = append(filters, fmt.Sprintf("[%s]subtitles=filename='%s':fontsdir='%s':force_style='Fontname=DejaVu Sans,Fontsize=%d,PrimaryColour=%s,OutlineColour=%s,BorderStyle=1,Outline=%d'[%s]", base, escapeFilterPath(layerSubtitlePath), escapeFilterPath(fontDirectory), fontSize, primary, outlineColor, outline, next))
 		case "text":
-			fontSize := positiveOr(layer.Style.FontSize, max(18, layer.Height/5))
-			filters = append(filters, fmt.Sprintf("[%s]drawtext=text='%s':x=%d:y=%d:fontsize=%d:fontcolor=white:borderw=%d:bordercolor=black%s[%s]", base, escapeDrawText(layer.Text), layer.X, layer.Y, fontSize, nonNegativeOr(layer.Style.Outline, 2), filterEnable(layer), next))
+			iconInput := -1
+			if layer.TextSource == "streamer_name" {
+				iconInput = assetInputs[twitchIconInputID]
+				if iconInput == 0 {
+					return "", "", "", fmt.Errorf("text layer %s has no Twitch icon input", layer.ID)
+				}
+			}
+			appendTextFilters(&filters, base, next, layer, step, config.Canvas.FPS, iconInput, fontPath)
 		case "color":
 			visual := fmt.Sprintf("layer%d", step)
 			filters = append(filters, fmt.Sprintf("color=c=%s:s=%dx%d:r=%d[%s]", safeColor(layer.Color, "#000000"), videoDimension(layer.Width), videoDimension(layer.Height), config.Canvas.FPS, visual))
@@ -462,6 +486,87 @@ func timelineOutputDuration(config composition.Config) float64 {
 	return duration
 }
 
+func usesTwitchIcon(config composition.Config) bool {
+	for _, layer := range config.Layers {
+		if layer.Visible && layer.Type == "text" && layer.TextSource == "streamer_name" {
+			return true
+		}
+	}
+	return false
+}
+
+func nextInputIndex(inputs map[string]int) int {
+	next := 1
+	for _, index := range inputs {
+		if index >= next {
+			next = index + 1
+		}
+	}
+	return next
+}
+
+func appendTextFilters(filters *[]string, base, next string, layer composition.Layer, step, fps, iconInput int, fontPath string) {
+	width := max(1, layer.Width)
+	height := max(1, layer.Height)
+	fontSize := positiveOr(layer.Style.FontSize, max(18, layer.Height/5))
+	outline := nonNegativeOr(layer.Style.Outline, 2)
+	fontColor := safeColor(layer.Style.PrimaryColor, "#ffffff")
+	outlineColor := safeColor(layer.Style.OutlineColor, "#000000")
+	align := layer.Style.TextAlign
+	if align == "" {
+		align = "center"
+	}
+	textX := "0"
+	switch align {
+	case "right":
+		textX = "w-text_w"
+	case "center":
+		textX = "(w-text_w)/2"
+	}
+	canvas := fmt.Sprintf("textcanvas%d", step)
+	visual := fmt.Sprintf("textlayer%d", step)
+	*filters = append(*filters, fmt.Sprintf("color=c=black@0:s=%dx%d:r=%d,format=rgba[%s]", width, height, fps, canvas))
+	textBase := canvas
+	if iconInput > 0 {
+		iconSize := fontSize
+		gap := max(4, fontSize/5)
+		textWidth := estimatedTextWidth(layer.Text, fontSize, max(1, width-iconSize-gap))
+		groupWidth := iconSize + gap + textWidth
+		groupX := 0
+		switch align {
+		case "right":
+			groupX = max(0, width-groupWidth)
+		case "center":
+			groupX = max(0, (width-groupWidth)/2)
+		}
+		icon := fmt.Sprintf("twitchicon%d", step)
+		withIcon := fmt.Sprintf("texticonbase%d", step)
+		*filters = append(*filters, fmt.Sprintf("[%d:v]scale=%d:%d,format=rgba[%s]", iconInput, iconSize, iconSize, icon))
+		*filters = append(*filters, fmt.Sprintf("[%s][%s]overlay=%d:%d:eof_action=pass:shortest=0[%s]", canvas, icon, groupX, max(0, (height-iconSize)/2), withIcon))
+		textBase = withIcon
+		textX = fmt.Sprintf("%d", groupX+iconSize+gap)
+	}
+	fontOption := ""
+	if fontPath != "" {
+		fontOption = "fontfile='" + escapeFilterPath(fontPath) + "':"
+	}
+	draw := fmt.Sprintf("[%s]drawtext=%stext='%s':x=%s:y=(h-text_h)/2:fontsize=%d:fontcolor=%s:borderw=%d:bordercolor=%s", textBase, fontOption, escapeDrawText(layer.Text), textX, fontSize, fontColor, outline, outlineColor)
+	if layer.Opacity < 1 {
+		draw += fmt.Sprintf(",colorchannelmixer=aa=%g", layer.Opacity)
+	}
+	*filters = append(*filters, draw+"["+visual+"]")
+	*filters = append(*filters, overlayFilter(base, visual, next, layer))
+}
+
+func estimatedTextWidth(text string, fontSize, limit int) int {
+	longest := 1
+	for _, line := range strings.Split(text, "\n") {
+		longest = max(longest, len([]rune(line)))
+	}
+	width := int(float64(longest) * float64(fontSize) * 0.58)
+	return min(limit, max(fontSize, width))
+}
+
 func scaleFilter(layer composition.Layer) string {
 	width, height := videoDimension(layer.Width), videoDimension(layer.Height)
 	fit := layer.Fit
@@ -532,6 +637,18 @@ func positiveOr(value, fallback int) int {
 		return value
 	}
 	return fallback
+}
+func subtitleFontSize(value, canvasHeight int) int {
+	if canvasHeight <= 0 {
+		canvasHeight = 1920
+	}
+	if value <= 0 {
+		value = 8
+	}
+	if value <= 16 {
+		return max(1, (value*canvasHeight+144)/288)
+	}
+	return value
 }
 func nonNegativeOr(value, fallback int) int {
 	if value >= 0 {

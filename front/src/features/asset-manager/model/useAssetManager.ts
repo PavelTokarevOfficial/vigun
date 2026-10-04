@@ -33,7 +33,14 @@ export function useAssetManager() {
         await fetch('/api/assets?includeSystem=1'),
       )
       folders.value = library.folders
-      assets.value = library.assets
+      assets.value = library.assets.map((asset) =>
+        asset.managed
+          ? asset
+          : {
+              ...asset,
+              url: `/api/assets/${encodeURIComponent(asset.id)}/content`,
+            },
+      )
     } catch (cause) {
       error.value =
         cause instanceof Error ? cause.message : 'Не удалось загрузить ассеты'

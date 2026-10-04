@@ -6,6 +6,7 @@ export type AssetFolder = {
   name: string
   createdAt: string
   updatedAt: string
+  system: boolean
 }
 
 export type Asset = {

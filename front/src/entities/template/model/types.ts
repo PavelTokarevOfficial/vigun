@@ -34,6 +34,7 @@ export type Layer = {
   filters?: { blur?: number; brightness?: number }
   style?: {
     fontSize?: number
+    textAlign?: 'left' | 'center' | 'right'
     alignment?: number
     marginV?: number
     outline?: number
@@ -127,9 +128,8 @@ export function createDefaultConfig(): TemplateConfig {
         visible: true,
         opacity: 1,
         style: {
-          fontSize: 8,
-          alignment: 2,
-          marginV: 100,
+          fontSize: 53,
+          textAlign: 'center',
           outline: 2,
           primaryColor: '&H00FFFFFF',
           outlineColor: '&H00000000',
@@ -179,6 +179,46 @@ export function normalizeConfig(config: TemplateConfig): TemplateConfig {
         return [{ ...layer, type: 'video', source: 'asset' }]
       }
       if (layer.type === 'gif') return [{ ...layer, type: 'image' }]
+      if (layer.type === 'text') {
+        return [
+          {
+            ...layer,
+            style: {
+              fontSize: 64,
+              textAlign: 'center',
+              outline: 2,
+              primaryColor: '#ffffff',
+              outlineColor: '#000000',
+              ...layer.style,
+            },
+          },
+        ]
+      }
+      if (layer.type === 'subtitles') {
+        const {
+          alignment: _alignment,
+          marginV: _marginV,
+          ...storedStyle
+        } = layer.style ?? {}
+        const storedFontSize = layer.style?.fontSize ?? 8
+        const fontSize =
+          layer.style?.alignment !== undefined && storedFontSize <= 16
+            ? Math.round((storedFontSize * config.canvas.height) / 288)
+            : storedFontSize
+        return [
+          {
+            ...layer,
+            style: {
+              textAlign: 'center',
+              outline: 2,
+              primaryColor: '&H00FFFFFF',
+              outlineColor: '&H00000000',
+              ...storedStyle,
+              fontSize,
+            },
+          },
+        ]
+      }
       return [layer]
     }),
   }

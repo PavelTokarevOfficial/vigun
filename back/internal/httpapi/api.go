@@ -10,6 +10,7 @@ import (
 	"github.com/finde-clip/finde-v2/back/internal/media"
 	"github.com/finde-clip/finde-v2/back/internal/processing"
 	"github.com/finde-clip/finde-v2/back/internal/realtime"
+	"github.com/finde-clip/finde-v2/back/internal/renderassets"
 	"github.com/finde-clip/finde-v2/back/internal/sourcevideo"
 	"github.com/finde-clip/finde-v2/back/internal/streamer"
 	"github.com/finde-clip/finde-v2/back/internal/subscription"
@@ -50,6 +51,7 @@ func New(s *streamer.Service, c *clip.Service, subs *subscription.Service, asset
 func (a *API) Router() http.Handler {
 	r := chi.NewRouter()
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) { write(w, 200, map[string]bool{"ok": true}) })
+	r.Get("/api/render-assets/text-font", a.renderTextFont)
 	r.Get("/api/events", a.pipelineEvents)
 	r.Route("/api/settings/whisper", func(r chi.Router) {
 		r.Get("/", a.listWhisperModels)
@@ -114,6 +116,7 @@ func (a *API) Router() http.Handler {
 	r.Post("/api/clips/import", a.importClip)
 	r.Get("/api/clips", a.localClips)
 	r.Get("/api/clips/{id}/source", a.clipSource)
+	r.Get("/api/clips/{id}/content", a.streamClipSource)
 	r.Delete("/api/clips/{id}", a.deleteClip)
 	r.Post("/api/clips/{id}/download", a.download)
 	r.Post("/api/clips/{id}/process", a.process)
@@ -131,6 +134,13 @@ func (a *API) Router() http.Handler {
 	r.Post("/api/videos/{id}/instagram/{containerID}/publish", a.publishInstagramContainer)
 	r.Delete("/api/videos/{id}", a.deleteVideo)
 	return r
+}
+
+func (a *API) renderTextFont(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "font/ttf")
+	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	w.Header().Set("Content-Length", strconv.Itoa(len(renderassets.TextFont)))
+	_, _ = w.Write(renderassets.TextFont)
 }
 
 func (a *API) listSourceVideos(w http.ResponseWriter, r *http.Request) {
@@ -451,6 +461,26 @@ func (a *API) clipSource(w http.ResponseWriter, r *http.Request) {
 	}
 	write(w, 200, map[string]any{"data": map[string]string{"url": url}})
 }
+func (a *API) streamClipSource(w http.ResponseWriter, r *http.Request) {
+	object, e := a.library.Source(r.Context(), chi.URLParam(r, "id"))
+	if e != nil {
+		fail(w, 404, e)
+		return
+	}
+	defer object.Body.Close()
+	contentType := object.ContentType
+	if contentType == "" || contentType == "application/octet-stream" || contentType == "binary/octet-stream" {
+		contentType = "video/mp4"
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Content-Disposition", "inline")
+	if object.Size >= 0 {
+		w.Header().Set("Content-Length", strconv.FormatInt(object.Size, 10))
+	}
+	if _, e = io.Copy(w, object.Body); e != nil {
+		a.log.Error("stream clip source", "clip_id", chi.URLParam(r, "id"), "error", e)
+	}
+}
 func (a *API) remoteClips(w http.ResponseWriter, r *http.Request) {
 	startedAt, endedAt, e := clipWindow(r)
 	if e != nil {
@@ -475,20 +505,24 @@ func clipWindow(r *http.Request) (time.Time, time.Time, error) {
 }
 
 func parseClipWindow(startedRaw, endedRaw string) (time.Time, time.Time, error) {
-	const dateLayout = "2006-01-02"
 	now := time.Now().UTC()
 	if startedRaw == "" || endedRaw == "" {
 		return time.Time{}, time.Time{}, errText("startedAt and endedAt are required together")
 	}
-	startedAt, err := time.Parse(dateLayout, startedRaw)
+	startedAt, startedAsDate, err := parseClipBoundary(startedRaw)
 	if err != nil {
-		return time.Time{}, time.Time{}, errText("startedAt must use YYYY-MM-DD")
+		return time.Time{}, time.Time{}, errText("startedAt must use YYYY-MM-DD or RFC3339")
 	}
-	endedDate, err := time.Parse(dateLayout, endedRaw)
+	endedAt, endedAsDate, err := parseClipBoundary(endedRaw)
 	if err != nil {
-		return time.Time{}, time.Time{}, errText("endedAt must use YYYY-MM-DD")
+		return time.Time{}, time.Time{}, errText("endedAt must use YYYY-MM-DD or RFC3339")
 	}
-	endedAt := endedDate.AddDate(0, 0, 1)
+	if startedAsDate != endedAsDate {
+		return time.Time{}, time.Time{}, errText("startedAt and endedAt must use the same format")
+	}
+	if endedAsDate {
+		endedAt = endedAt.AddDate(0, 0, 1)
+	}
 	if endedAt.After(now) {
 		endedAt = now
 	}
@@ -496,6 +530,14 @@ func parseClipWindow(startedRaw, endedRaw string) (time.Time, time.Time, error) 
 		return time.Time{}, time.Time{}, errText("startedAt must be before endedAt")
 	}
 	return startedAt, endedAt, nil
+}
+
+func parseClipBoundary(raw string) (time.Time, bool, error) {
+	if value, err := time.Parse("2006-01-02", raw); err == nil {
+		return value, true, nil
+	}
+	value, err := time.Parse(time.RFC3339, raw)
+	return value, false, err
 }
 
 type importInput struct {
@@ -814,6 +856,12 @@ func (a *API) assetContent(w http.ResponseWriter, r *http.Request) {
 	}
 	defer object.Body.Close()
 	contentType := object.ContentType
+	if (contentType == "" || contentType == "application/octet-stream" || contentType == "binary/octet-stream") && strings.HasSuffix(strings.ToLower(object.Key), ".mp4") {
+		contentType = "video/mp4"
+	}
+	if (contentType == "" || contentType == "application/octet-stream" || contentType == "binary/octet-stream") && strings.HasSuffix(strings.ToLower(object.Key), ".mov") {
+		contentType = "video/quicktime"
+	}
 	if contentType == "application/x-subrip" || strings.HasSuffix(strings.ToLower(object.Key), ".srt") {
 		contentType = "text/plain; charset=utf-8"
 	}
